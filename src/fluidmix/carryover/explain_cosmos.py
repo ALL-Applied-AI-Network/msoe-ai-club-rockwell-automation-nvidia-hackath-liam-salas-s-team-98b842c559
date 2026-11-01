@@ -1,5 +1,8 @@
 """Optional operator explanation through NVIDIA Cosmos Reason (build.nvidia.com), with the deterministic template as the fallback.
 
+Status: the operator message is a deterministic template (explain.py); this optional Cosmos Reason client exists but
+is not called by the pipeline and has not been run.
+
 The decision never depends on this module: the carryover flag is computed by decide.py from measurements. This only
 turns the evidence of one vial into an operator-facing message. It calls the OpenAI-compatible chat completions API
 that build.nvidia.com exposes for the hosted Cosmos 3 reasoner. Nothing is sent unless NVIDIA_API_KEY is set, and the

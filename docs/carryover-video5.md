@@ -4,7 +4,7 @@ This page records the first end-to-end run of the decision stage on a real recor
 the 30 vials in video 5, the pipeline measured the vial's final-mixture colour from the fill camera,
 compared it with the settled colour of the same recipe, applied a fixed rule, wrote a deterministic
 operator message, and linked the vial to the camera ID the top-down tracker assigned it in the
-cap/seal lane. Everything below was computed by the two scripts named under "How to run" from the
+cap/seal lane. Everything below was computed by the scripts named under "How to run" from the
 three video-5 recordings and the label CSVs in `data/`. Where a number is **measured** it came from a
 script; where something is **assumed** it is called that.
 
@@ -46,14 +46,16 @@ reference. No such peer: `insufficient_evidence`.
 
 On this run the median noise was 0.000, so the floor decided every vial: **tau = 2.30**.
 
-**Baseline: the line's known-colour check.** Pass if the measured colour is within tau of *any* recipe's
-reference colour (the vial's own recipe uses the same leave-one-out reference), else fail. This is what
-the existing Teledyne check does in spirit: it recognises a known colour but cannot tell a
-wrong-but-known colour from the right one.
+**Baseline: a stand-in for the line's known-colour check** (pass if the colour is within tau of *any*
+recipe's reference colour; the real Teledyne outputs are not in the dataset). The vial's own recipe uses
+the same leave-one-out reference. Such a check recognises a known colour but cannot tell a
+wrong-but-known colour from the right one. Every "known-colour check" column below is this stand-in,
+not a measurement of the plant's system.
 
 **Explanation.** A deterministic template (`src/fluidmix/carryover/explain.py`) built only from the
-record's fields: vial, recipe, previous recipe, dE, tau and decision. No model is called; Cosmos is not
-used.
+record's fields: vial, recipe, previous recipe, dE, tau and decision. The operator message is a
+deterministic template; an optional Cosmos Reason client exists in
+`src/fluidmix/carryover/explain_cosmos.py` but is not called by the pipeline and has not been run.
 
 ## Results
 
@@ -149,23 +151,32 @@ small (0.6, 1.1, 1.1, 0.6), so cart movement alone does not account for the gap 
 ## Attribution: does the error point at the previous recipe? (descriptive, no thresholds)
 
 `scripts/carryover_attribution.py` fits each early vial's measured colour as a mix of its own recipe's
-settled colour (median of the position 3 vials) and the previous recipe's settled colour, and reports
-the fitted share of the previous recipe, the residual the mix does not explain, and the cosine between
-the deviation and the direction toward the previous recipe (1.0 = points straight at it). Full table:
-`outputs/carryover-video5/attribution.md`; figure: `outputs/carryover-video5/attribution.png`.
+settled colour and the previous recipe's settled colour, and reports the fitted share of the previous
+recipe, the residual the mix does not explain, and the cosine between the deviation and the direction
+toward the previous recipe (1.0 = points straight at it). Each recipe's settled colour in this analysis
+is its single position-3 vial (n=1 per recipe), not a median of two; the decision rule above uses a
+different reference, the leave-one-out median of position>=2 peers (so for a position-2 vial it is the
+position-3 vial alone). Full table: [attribution.md](assets/carryover/attribution.md); figure:
+[attribution.png](assets/carryover/attribution.png) (both copied from the script's output
+`outputs/carryover-video5/`).
+
+![First-vial error after a changeover and its relation to the recipe change](assets/carryover/attribution.png)
 
 | vial position in a run | distance to the recipe's settled colour, median [range] | direction cosine toward the previous recipe, median | fitted share of the previous recipe, median [range] |
 |---|---|---|---|
 | first vial after a recipe change (n=8) | 22.9 [3.5 to 50.4] | 0.97 (5 of 8 at or above 0.9) | 0.68 [0.27 to 1.63] |
 | second vial (n=10) | 2.3 [0.7 to 15.3] | the three that still deviate (vials 5, 23, 29: dE 15.3, 4.4, 8.2) have cosine 0.99, 0.94, 0.69 toward the pre-run recipe; the small deviations point in no particular direction | 0.29, 0.07, 0.16 for those three |
 
-Reading: the colour error of the first vial after a changeover is explained by the previous recipe,
-scales with how different the two recipes are, and decays within two vials. The exception is recipe 9
-after recipe 8 (vial 13), whose two recipes are only 6.6 units apart, so carryover cannot be seen in
-colour there. A share above 1 means the vial looks even more like the previous recipe than that recipe's
-own settled vials; with two settled vials per recipe and uncalibrated camera colour, shares are
-indicative, not volumetric. This section involves no threshold and no decision; it is the measurement
-the fixed rule above is trying to turn into one.
+Reading: the colour error of the first vial after a changeover is explained by the previous recipe and
+decays within two vials. Larger recipe changes gave larger first-vial errors in 6 of 8 changeovers
+(rank correlation 0.72, n=8; vials 16 and 25 exceed their recipe gap). The 0.72 is Spearman's rho on
+the table's one-decimal values as the script now reports it (0.69 on the unrounded values; vials 25 and
+28 tie at 21.9 only after rounding); it is a reading of eight points, not a fitted law. The exception
+is recipe 9 after recipe 8 (vial 13), whose two recipes are only 6.6 units apart, so carryover cannot
+be seen in colour there. A share above 1 means the vial looks even more like the previous recipe than
+that recipe's own settled vial; with one settled vial per recipe and uncalibrated camera colour, shares
+are indicative, not volumetric. This section involves no threshold and no decision; it is the
+measurement the fixed rule above is trying to turn into one.
 
 ## Limits
 
@@ -174,17 +185,19 @@ from one recording (video 5) with one camera, so this is an in-sample check of t
 on held-out data. The rule and tau formula were not changed after the first run, but they were not frozen
 independently of video 5 (next section), and the measurement region (crop and top-0.7 % saturation rule)
 was chosen by eye earlier in the project on this same video. References are leave-one-out medians of at
-most two peers per recipe, so a single odd peer moves the reference; the known-colour check uses the same
-tau and references and is only a baseline. CIE76 on camera sRGB is not a calibrated colour difference.
+most two peers per recipe (for a position-2 vial, the position-3 vial alone), so a single odd peer moves
+the reference; the known-colour check uses the same tau and references and is only a stand-in baseline.
+CIE76 on camera sRGB is not a calibrated colour difference.
 
 ## Provenance of the rule and tau
 
-- tau = max(2.3, 3 * median noise) was written in `decide.py` before `scripts/carryover_video5.py` was
-  first run (file mtimes 2026-11-01 00:37 vs records.json 00:39) and has not been changed since. That is
-  the only ordering evidence: the rule was not committed or recorded in a dated freeze note before the
-  run, so the ordering cannot be audited from the repository ([feasibility protocol](feasibility-protocol.md)
-  asks for a timestamped freeze). Earlier wording that the rule was "frozen before any measurement was
-  seen" and that "nothing was tuned on video 5" has been withdrawn.
+- tau = max(2.3, 3 * median noise) is stated by its author to have been written in `decide.py` before
+  `scripts/carryover_video5.py` was first run, and it has not been changed since. No auditable pre-run
+  record of the rule exists: it was not committed or recorded in a dated freeze note before the run, so
+  the ordering rests on the author's statement alone and cannot be checked from the repository
+  ([feasibility protocol](feasibility-protocol.md) asks for a timestamped freeze). Earlier wording that
+  the rule was "frozen before any measurement was seen" and that "nothing was tuned on video 5" has been
+  withdrawn.
 - The noise term is computed in-sample: 3 * median(measurement_noise_dE) over the 28 scored vials =
   0.000, so the floor alone decided every vial (tau = 2.30).
 - The floor 2.3 and multiplier 3 were chosen by hand. 2.3 is the value commonly quoted as the CIE76
@@ -201,13 +214,21 @@ tau and references and is only a baseline. CIE76 on camera sRGB is not a calibra
 The frozen dense53 segmenter and tracker ([cap segmenter](topdown-cap-segmenter.md)) were run on
 `cap_seal_video_5.mp4` with the real-evaluation protocol and confidence floor 0.90, using the checkpoint
 whose sha256 matches `models/topdown/dense53-frozen-model.json`. Measured: 50942 frames in 720.4 s
-(70.7 fps on cuda), 47 distinct track IDs (CV001 to CV047), 124874 raw boxes, and no tracker exit
-events. That last number is expected, not a fault: the guarded tracker's own exit line sits at y = 22,
-above where tracks end, so it never fires on the real videos, and the frozen harness scores crossings of
-the reference line at y = 100 from track positions instead (18 of 27 found on video 5 for dense53). The
-run script now records those reference-line crossings per track (`line_crossings` in `summary.json`).
-Re-run over all of video 5 it recorded 18 crossings, each within 15 frames of one of the 27 labelled
-crossing intervals, the same 18 of 27 the frozen harness scores; the demo clips flash them.
+(70.7 fps on the DGX Spark GB10 over video 5), 47 distinct track IDs (CV001 to CV047), 124874 raw
+boxes, and no tracker exit events (`tracker_exit_events` is empty in `summary.json`). That last number
+is expected, not a fault: the guarded tracker's own exit line sits at y = 22, above where tracks end, so
+it never fires on the real videos, and the frozen harness scores crossings of the reference line at
+y = 100 from track positions instead. The run script records those reference-line crossings per track
+(`line_crossings` in `summary.json`); the stored run on the Spark has 18 of them. Checked on 2026-11-01
+against the draft trajectory labels: each of the 18 lies within one frame of a distinct one of the 27
+labelled crossing intervals (for example track CV007 at frame 5416 against the labelled crossing of
+cap5-T002 at frames 5415 to 5416), the same 18 of 27 the committed harness report counts
+(`data/topdown/harness-report-dense53.json`, video 5: expected_reference_exits 27, missed 9). The frozen
+scorer and the draft trajectory labels are not in git; they live on the team's DGX Spark at
+`/home/hackathon5/outputs/topdown-01a17f15-20261029/dense-real53/` (source/heldout_tracking.py sha256
+8ddf32c0..., source/evaluate_topdown_segmentation.py sha256 a2eb4e16..., trajectories.json sha256
+9fdda3cb...), and the committed harness reports in `data/topdown/` are their output. The crossing check
+above is not a stored artifact; it was re-run by hand against that trajectories.json.
 
 `scripts/carryover_demo.py` then links each vial's decision to a camera ID by a stated rule: the first
 unassigned lane-entry event (a track born at centre y > 436, the bottom of the lane) in the window
@@ -215,11 +236,13 @@ unassigned lane-entry event (a track born at centre y > 436, the bottom of the l
 the raw track list: one- or two-frame tracks with no follow-on birth within 60 frames are treated as
 detector flicker, and a track born within 60 frames after an entry track ended near the lane bottom is
 treated as the same vial re-identified (the tracker often fragments an entry into a short ID at y~476 and
-a long ID at y~446). After those adjustments there are **27 lane-entry events for 30 vials, so 27 of 30
-vials are linked** (unlinked: vials 4, 29, 30). No label verifies the links; because the tracker missed
-some entries, the greedy chain can be shifted by one vial after a miss, and the delay between fill end
-and lane birth (7.0 s to 87.3 s) is reported per vial so a reader can judge. The crossing column is the first reference-line crossing (y = 100) recorded by the run script for any of the
-vial's fragment IDs: 18 of the 27 linked vials have one, which is the same 18 of 27 the frozen harness scores.
+a long ID at y~446). After those adjustments there are **27 lane-entry events for 30 vials: 27 of 30
+vials linked to a camera ID** (unverified: no label checks the links, and a missed lane entry can shift
+the greedy assignment by one vial; unlinked: vials 4, 29, 30). The delay between fill end and lane birth
+(7.0 s to 87.3 s) is reported per vial so a reader can judge. The crossing column is the first
+reference-line crossing (y = 100) recorded by the run script for any of the vial's fragment IDs:
+**18 of the linked vials have a recorded reference-line crossing**, the same 18 of 27 the harness report
+counts.
 
 | vial | recipe | decision | camera ID [fragments] | birth frame | delay s | reference-line crossing frame |
 |---|---|---|---|---|---|---|
@@ -257,9 +280,11 @@ vial's fragment IDs: 18 of the 27 linked vials have one, which is the same 18 of
 ## Demo clips
 
 Lane-pass clips (`scripts/carryover_lane_clip.py VIAL ...`): the inspection lane at 3x following one vial's camera ID
-from its birth at the lane bottom to its reference-line crossing, with the decision card beside it; rendered for
-vial 25 (first after recipe 12, discard), vial 13 (first after recipe 8, discard) and vial 17 (repeat, keep) into
-`outputs/carryover-video5/demo/lanepass_vialNN_<decision>.mp4` with a JPEG at the crossing frame.
+from its birth at the lane bottom to its reference-line crossing, with the decision card beside it; the frame
+border flashes for 45 frames from the recorded crossing. Rendered for vial 25 (first after recipe 12, discard),
+vial 13 (first after recipe 8, discard) and vial 17 (repeat, keep) into
+`outputs/carryover-video5/demo/lanepass_vialNN_<decision>.mp4` with a JPEG at the crossing frame. These are the
+only clips that show a crossing; like the three-camera clips they live on the Spark, not in git.
 
 ### Three-camera changeover clips
 
@@ -270,7 +295,10 @@ after it, extended when needed so the linked camera ID's birth is on screen. The
 PLC recipe, the measurement crop, the measured and reference colour swatches, the dE, tau and
 known-colour result, the operator message, and a decision card that reads PENDING until the measurement
 window has closed. The right panel shows the tracker boxes and the linked ID. Every number drawn comes
-from `records.json` or `links.json`.
+from `records.json` or `links.json`. None of the five clips contains a reference-line crossing: each ends
+at fill end + 600 frames or the linked ID's birth + 150 frames, and on video 5 the crossing comes 748 to
+1450 frames after the lane birth (vials 7, 16 and 22 have no recorded crossing at all), so the
+crossing flash that `carryover_demo.py` can draw never appears in them.
 
 | clip | vial | length | what it shows |
 |---|---|---|---|
@@ -284,18 +312,31 @@ A still (`.jpg`) of each clip sits beside it.
 
 ## How to run
 
-From the worktree root with the shared environment's Python:
+From the repository root, in a virtual environment with `pip install -r requirements-dev.txt` (it lists
+opencv-python, matplotlib and torch; CPU wheels suffice for everything below except the segmenter
+step, which took 720 s on the Spark GPU). `<dataset>` is the organizers' `csi-vial-fill-dataset`
+folder ([data](data.md)); every script defaults it to that folder below `FLUIDMIX_DATA` (or
+`<repo>/external`), so `--dataset` is only needed when the data lives elsewhere. Outputs default to
+`outputs/carryover-video5/` in the repository.
 
 ```bash
-python -m pytest tests/test_carryover.py -q          # 8 passed in 0.04s on 2026-11-01
-python scripts/carryover_video5.py                   # measures, decides, explains; writes outputs/carryover-video5/records.json and results.md
+python -m pytest tests/test_carryover.py -q          # 11 passed on 2026-11-01
+python scripts/carryover_video5.py --dataset <dataset> --out outputs/carryover-video5
+    # measures, decides, explains; writes records.json and results.md
+python scripts/carryover_attribution.py outputs/carryover-video5
+    # attribution.md and attribution.png beside records.json (the copies in docs/assets/carryover/)
 python scripts/topdown/run_topdown_segmenter.py <dataset>/cap_seal/videos/cap_seal_video_5.mp4 \
     --weights <dense53 best.pt> --protocol models/topdown/real-evaluation-protocol.json --floor 0.90 --no-video \
-    --out outputs/carryover-video5/topdown         # tracker IDs; 720 s on the Spark GPU
-python scripts/carryover_demo.py                     # links.json and the five demo clips (cv2 only; no ffmpeg on the Spark)
+    --out outputs/carryover-video5/topdown         # tracker IDs and line_crossings; 720 s on the Spark GPU
+python scripts/carryover_demo.py --dataset <dataset> --records-dir outputs/carryover-video5 --out outputs/carryover-video5
+    # links.json and the five three-camera clips (cv2 only; no ffmpeg on the Spark); --links-only skips the clips
+python scripts/carryover_lane_clip.py 25 13 17 --dataset <dataset> --records-dir outputs/carryover-video5 \
+    --out outputs/carryover-video5/demo            # lane-pass clips that flash the reference-line crossing
 ```
 
 The default weights path in the repository does not exist in a fresh checkout because weights stay out
-of git ([models/topdown/README.md](../models/topdown/README.md)); pass the dense53 checkpoint whose
-sha256 matches `models/topdown/dense53-frozen-model.json`. The dataset root and the three video-5
-recordings are the organizers' CSI vial-fill dataset ([data](data.md)).
+of git (`models/topdown/README.md`); pass the dense53 checkpoint whose sha256 matches
+`models/topdown/dense53-frozen-model.json`. The two 1.1 MB checkpoints are on the Spark; their sha256
+receipts and training protocols are in `models/topdown/`. The demo and lane-clip steps need the
+tracker output of the segmenter step (or the stored run on the Spark at
+`/home/hackathon5/liamreporoot/topdown-results-20261101/outputs/carryover-video5/topdown/`).

@@ -2,12 +2,15 @@
 """End-to-end carryover demo for video 5: link each vial's colour decision to its top-down camera ID
 and render three-camera clips (tank_level | vial_fill | cap_seal) with cv2 only (no ffmpeg on this box).
 
-Inputs (all produced earlier, none of them changed here):
-  outputs/carryover-video5/records.json            per-vial colour decisions (scripts/carryover_video5.py)
-  outputs/carryover-video5/topdown/detections.jsonl per-frame boxes and tracks from the top-down tracker
-  outputs/carryover-video5/topdown/summary.json     tracker exit events and reference-line crossings (line_crossings)
-  data/video5_vial_recipes.csv                      PLC recipe volumes (label stand-in for the control signal)
-  the three frame-synchronized videos *_video_5.mp4 (same frame index = same instant)
+Inputs (all produced earlier, none of them changed here; RECORDS_DIR defaults to outputs/carryover-video5):
+  RECORDS_DIR/records.json            per-vial colour decisions (scripts/carryover_video5.py)
+  RECORDS_DIR/topdown/detections.jsonl per-frame boxes and tracks from the top-down tracker
+  RECORDS_DIR/topdown/summary.json     tracker exit events (tracker_exit_events; older runs: exits) and
+                                       reference-line crossings (line_crossings)
+  data/video5_vial_recipes.csv         PLC recipe volumes (label stand-in for the control signal)
+  the three frame-synchronized videos *_video_5.mp4 under --dataset (same frame index = same instant);
+  --dataset defaults to the csi-vial-fill-dataset folder below fluidmix.paths.data_root(), so FLUIDMIX_DATA
+  (or .env) is honoured, else <repo>/external
 
 Step 1 (links.json): a vial leaves the fill station a second or two after its fill_end_frame and later
 enters the inspection lane of the cap_seal camera from the bottom, where the tracker gives it a new
@@ -20,17 +23,21 @@ y~476 and a long ID at y~446), so one entry event can carry several fragment IDs
 fragment is reported as the camera ID. Entry events are fewer than vials (the tracker missed some),
 so the greedy chain can be shifted by one vial after a miss; delay_s is reported so the reader can judge.
 
-Step 2 (demo/): clips from fill_end_frame - 150 to fill_end_frame + 600 (extended to the linked ID's
+Step 2 (OUT/demo/): clips from fill_end_frame - 150 to fill_end_frame + 600 (extended to the linked ID's
 birth + 150 frames when that birth is later, so the linked ID is actually seen), 30 fps, mp4v. The
 decision card shows PENDING until the measurement window has closed, then the recorded decision.
-Every number drawn comes from records.json or links.json.
+Every number drawn comes from records.json or links.json. The clip range ends well before the vial's
+reference-line crossing (on video 5 the crossing comes 748 to 1450 frames, 25 to 48 s, after the lane birth), so these
+clips show the lane entry and the linked ID, not the crossing; scripts/carryover_lane_clip.py follows an
+ID to the crossing and flashes it.
 
-    python scripts/carryover_demo.py              # links + 4 changeover clips + 1 keep clip
+    python scripts/carryover_demo.py [--dataset DIR] [--records-dir DIR] [--out DIR]   # links + 4 changeover clips + 1 keep clip
     python scripts/carryover_demo.py --links-only
 """
 import argparse
 import csv
 import json
+import sys
 import textwrap
 from pathlib import Path
 
@@ -38,9 +45,11 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
-DATASET = Path("/home/hackathon5/liamreporoot/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559"
-               "/external/external/csi-vial-fill-dataset")
-OUT = ROOT / "outputs/carryover-video5"
+sys.path.insert(0, str(ROOT / "src"))
+from fluidmix.paths import data_root, require
+
+DATASET_LAYOUT = Path("csi-vial-fill-dataset")
+DEFAULT_RECORDS_DIR = ROOT / "outputs/carryover-video5"
 CAMS = ["tank_level", "vial_fill", "cap_seal"]
 FPS = 30
 ENTRY_Y = 436            # tracker entry line (models/topdown/real-evaluation-protocol.json)
@@ -57,6 +66,19 @@ RED, GREEN, GREY, YELLOW, WHITE, CYAN = (40, 40, 230), (40, 200, 60), (160, 160,
 
 _RGB_TO_XYZ = np.array([[0.4124, 0.3576, 0.1805], [0.2126, 0.7152, 0.0722], [0.0193, 0.1192, 0.9505]])
 _D65 = np.array([0.95047, 1.0, 1.08883])
+
+
+def default_dataset(explicit=None):
+    """The organizers' csi-vial-fill-dataset folder: --dataset itself when given, else that folder below
+    fluidmix.paths.data_root() (FLUIDMIX_DATA or .env, else <repo>/external)."""
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return data_root() / DATASET_LAYOUT
+
+
+def tracker_exits(summary):
+    """The tracker's own exit events: the current run script writes tracker_exit_events, older runs wrote exits."""
+    return summary.get("tracker_exit_events", summary.get("exits", []))
 
 
 def lab_to_bgr(lab):
@@ -263,8 +285,8 @@ def tank_panel(img, r, f):
     return np.concatenate([header(f"tank_level_video_5   frame {f}   t = {f / FPS:.1f} s", "tanks T100 / T200 / T400 feed the shared dispensing path"), img])
 
 
-def render_clip(r, link, recipe, det, exits, start, end, out_mp4, out_jpg, jpg_frame):
-    caps = {c: cv2.VideoCapture(str(DATASET / c / "videos" / f"{c}_video_5.mp4")) for c in CAMS}
+def render_clip(dataset, r, link, recipe, det, exits, start, end, out_mp4, out_jpg, jpg_frame):
+    caps = {c: cv2.VideoCapture(str(dataset / c / "videos" / f"{c}_video_5.mp4")) for c in CAMS}
     for c in caps.values():
         c.set(cv2.CAP_PROP_POS_FRAMES, start)
     wr = cv2.VideoWriter(str(out_mp4), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (3 * PANEL_W + 16, PANEL_H + HDR))
@@ -299,15 +321,24 @@ def main():
                          "spanning dE 4.5 to 41.7 and including vial 22, whose known-colour check passes)")
     ap.add_argument("--keep-vial", type=int, default=17, help="a kept vial to render (default 17, repeat 2 of recipe 10)")
     ap.add_argument("--links-only", action="store_true")
+    ap.add_argument("--dataset", type=Path, default=None,
+                    help="csi-vial-fill-dataset folder (default: fluidmix.paths data root, i.e. FLUIDMIX_DATA)")
+    ap.add_argument("--records-dir", type=Path, default=DEFAULT_RECORDS_DIR,
+                    help="folder with records.json and topdown/ (default: <repo>/outputs/carryover-video5)")
+    ap.add_argument("--out", type=Path, default=None,
+                    help="where links.json and demo/ go (default: the records directory)")
     a = ap.parse_args()
+    OUT = a.out or a.records_dir
+    OUT.mkdir(parents=True, exist_ok=True)
 
-    rec = json.load(open(OUT / "records.json"))
+    rec = json.load(open(a.records_dir / "records.json"))
     vials = {r["vial"]: r for r in rec["vials"]}
-    det, ids = load_tracks(OUT / "topdown/detections.jsonl")
-    summary = json.load(open(OUT / "topdown/summary.json"))
+    det, ids = load_tracks(a.records_dir / "topdown/detections.jsonl")
+    summary = json.load(open(a.records_dir / "topdown/summary.json"))
     # exit events: the tracker's own exit line (y=22) never fires on the real videos; the run script records
-    # reference-line crossings (y=100, the scorer's definition) under line_crossings, which is what the clips flash
-    exits = summary.get("exits", []) + [dict(track_id=c["track_id"], frame=c["frame"]) for c in summary.get("line_crossings", [])]
+    # reference-line crossings (y=100, the scorer's definition) under line_crossings; both are flashed if they
+    # fall inside a clip's frame range (on video 5 the crossings come after the clips end)
+    exits = tracker_exits(summary) + [dict(track_id=c["track_id"], frame=c["frame"]) for c in summary.get("line_crossings", [])]
     events = entry_events(ids)
     links = link_vials(rec["vials"], events)
     # exit frame = first reference-line crossing (y=100) of any of the vial's fragment ids, from the run script
@@ -335,6 +366,9 @@ def main():
     if a.links_only:
         return
 
+    dataset = default_dataset(a.dataset)
+    for c in CAMS:
+        require(dataset / c / "videos" / f"{c}_video_5.mp4", f"{c} video 5")
     recipes = read_recipes()
     demo = OUT / "demo"
     demo.mkdir(parents=True, exist_ok=True)
@@ -355,7 +389,7 @@ def main():
         if link["birth_frame"] is not None:
             end = max(end, link["birth_frame"] + 150)
         jpg_frame = r["window"][1] if r["window"] else r["fill_end_frame"] + 60
-        n = render_clip(r, link, recipes.get(v), det, exits, start, end, demo / f"{stem}.mp4", demo / f"{stem}.jpg", jpg_frame)
+        n = render_clip(dataset, r, link, recipes.get(v), det, exits, start, end, demo / f"{stem}.mp4", demo / f"{stem}.jpg", jpg_frame)
         print(f"vial {v}: {stem}.mp4 frames {start}-{end} ({n} written, {n / FPS:.1f} s), jpg at frame {jpg_frame}, "
               f"camera id {link['camera_id']} born {link['birth_frame']}")
 

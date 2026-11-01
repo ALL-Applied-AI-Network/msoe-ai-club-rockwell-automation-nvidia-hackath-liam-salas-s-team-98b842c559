@@ -1,6 +1,11 @@
 """Run the video-5 carryover decision end to end and write records.json and results.md.
 
-    python scripts/carryover_video5.py [--video PATH] [--out DIR]
+    python scripts/carryover_video5.py [--dataset DIR] [--video PATH] [--out DIR]
+
+--dataset is the organizers' csi-vial-fill-dataset folder (default: that folder below
+fluidmix.paths.data_root(), so FLUIDMIX_DATA or .env is honoured, else <repo>/external);
+--video overrides the vial_fill video-5 path inside it; --out defaults to
+<repo>/outputs/carryover-video5.
 
 Inputs (labels, not model outputs): data/video5_vial_recipes.csv (the PLC's programmed recipe),
 data/video5_transitions.csv, data/real_check_windows.csv; data/video5_vial_colors.csv is only
@@ -19,9 +24,19 @@ sys.path.insert(0, str(ROOT / "src"))
 from fluidmix.carryover.measure import measure_vials, cie76
 from fluidmix.carryover.decide import decide, flagged_count
 from fluidmix.carryover.explain import explain
+from fluidmix.paths import data_root, require
 
-DEFAULT_VIDEO = Path("/home/hackathon5/liamreporoot/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559"
-                     "/external/external/csi-vial-fill-dataset/vial_fill/videos/vial_fill_video_5.mp4")
+DATASET_LAYOUT = Path("csi-vial-fill-dataset")
+VIDEO_IN_DATASET = Path("vial_fill/videos/vial_fill_video_5.mp4")
+DEFAULT_OUT = ROOT / "outputs/carryover-video5"
+
+
+def default_dataset(explicit=None):
+    """The organizers' csi-vial-fill-dataset folder: --dataset itself when given, else that folder below
+    fluidmix.paths.data_root() (FLUIDMIX_DATA or .env, else <repo>/external)."""
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+    return data_root() / DATASET_LAYOUT
 
 
 def read_csv(name):
@@ -76,7 +91,9 @@ def write_results(records, tau, out):
              "for the control-system signal), not a model output. This is an in-sample demonstration of a",
              "fixed rule (src/fluidmix/carryover/decide.py), not a validation: the rule was not changed after",
              "the first run, but no independent freeze record exists and its tau floor coincides with an",
-             "older video-5 statistic (section (f)).", "",
+             "older video-5 statistic (section (f)). The known-colour check column is a stand-in for the line's",
+             "known-colour check (pass if the colour is within tau of ANY recipe's reference colour; the real",
+             "Teledyne outputs are not in the dataset).", "",
              f"tau = max(2.3, 3 * median noise) = **{tau:.2f}** "
              f"(median frame-to-frame noise over eligible vials = "
              f"{np.median([r['measurement_noise_dE'] for r in records.values() if r['measured_lab'] is not None]):.3f}).",
@@ -160,8 +177,9 @@ def write_results(records, tau, out):
               "validation on held-out data. The rule and tau formula were not changed after the first run, but",
               "they were not frozen independently of video 5 (section (f)), and the measurement region (crop and",
               "top-0.7 % saturation rule) was chosen by eye earlier in the project on this same video.",
-              "References are leave-one-out medians of at most two peers per recipe, so a",
-              "single odd peer moves the reference; the known-colour check uses the same tau and references and is",
+              "References are leave-one-out medians of at most two peers per recipe (for a position-2 vial, the",
+              "position-3 vial alone), so a single odd peer moves the reference; the known-colour check uses the",
+              "same tau and references and is",
               "only a baseline. CIE76 on camera sRGB is not a calibrated colour difference.", ""]
     lines += provenance_section(records, tau)
     (out / "results.md").write_text("\n".join(lines))
@@ -174,12 +192,12 @@ def provenance_section(records, tau):
     old_pos1 = sorted(old[v] for v, r in records.items() if r["recipe_changed"] == 1 and r["position_in_run"] == 1)
     noises = [r["measurement_noise_dE"] for r in records.values() if r["measured_lab"] is not None]
     return ["## (f) Provenance of the rule and tau (review response, 2026-11-01)", "",
-            "- tau = max(2.3, 3 * median noise) was written in decide.py before scripts/carryover_video5.py was first",
-            "  run (file mtimes 2026-11-01 00:37 vs records.json 00:39) and has not been changed since. That is the",
-            "  only ordering evidence: the rule was not committed or recorded in a dated freeze note before the run,",
-            "  so the ordering cannot be audited from the repository (docs/feasibility-protocol.md asks for a",
-            "  timestamped freeze). Earlier wording that the rule was 'frozen before any measurement was seen' and",
-            "  that 'nothing was tuned on video 5' has been withdrawn.",
+            "- tau = max(2.3, 3 * median noise) is stated by its author to have been written in decide.py before",
+            "  scripts/carryover_video5.py was first run, and it has not been changed since. No auditable pre-run",
+            "  record of the rule exists: it was not committed or recorded in a dated freeze note before the run,",
+            "  so the ordering rests on the author's statement alone and cannot be checked from the repository",
+            "  (docs/feasibility-protocol.md asks for a timestamped freeze). Earlier wording that the rule was",
+            "  'frozen before any measurement was seen' and that 'nothing was tuned on video 5' has been withdrawn.",
             f"- The noise term is computed in-sample: 3 * median(measurement_noise_dE) over the {len(noises)} scored vials",
             f"  = {3 * float(np.median(noises)):.3f}, so the floor alone decided every vial (tau = {tau:.2f}).",
             "- The floor 2.3 and multiplier 3 were chosen by hand. 2.3 is the value commonly quoted as the CIE76",
@@ -195,10 +213,16 @@ def provenance_section(records, tau):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--video", type=Path, default=DEFAULT_VIDEO)
-    ap.add_argument("--out", type=Path, default=ROOT / "outputs/carryover-video5")
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--dataset", type=Path, default=None,
+                    help="csi-vial-fill-dataset folder (default: fluidmix.paths data root, i.e. FLUIDMIX_DATA)")
+    ap.add_argument("--video", type=Path, default=None,
+                    help=f"vial_fill video 5 (default: <dataset>/{VIDEO_IN_DATASET})")
+    ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     args = ap.parse_args()
+    if args.video is None:
+        args.video = default_dataset(args.dataset) / VIDEO_IN_DATASET
+    require(args.video, "vial_fill video 5")
     args.out.mkdir(parents=True, exist_ok=True)
     records = load_records()
     measured = measure_vials(args.video, [r.pop("_window_row") for r in records.values()])

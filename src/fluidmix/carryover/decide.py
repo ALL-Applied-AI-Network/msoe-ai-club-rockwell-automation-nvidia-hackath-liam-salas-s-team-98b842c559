@@ -5,9 +5,11 @@ chosen by hand. 2.3 is the value commonly quoted as the CIE76 just-noticeable di
 also equals the median position-2 dE of these same video-5 vials in data/video5_vial_colors.csv
 and docs/plan.md (committed 2026-10-31), and there is no dated freeze record predating that
 file, so the floor cannot be claimed independent of video 5. The noise term is computed
-in-sample from the measurement noise of the vials being scored. The only ordering evidence is
-file mtimes (this file 2026-11-01 00:37, first records.json 00:39); the rule was not committed
-before the run. Any future tau must be set on twin val per docs/evaluation.md.
+in-sample from the measurement noise of the vials being scored. The author states the rule was
+written before the first run of scripts/carryover_video5.py, but no auditable pre-run record of
+it exists (it was not committed or recorded in a dated freeze note before the run), so that
+ordering rests on the author's statement alone. Any future tau must be set on twin val per
+docs/evaluation.md and frozen in a dated, committed note.
 
 Reference colour (measured from the other vials): for a vial of recipe R, the per-channel median
 Lab of the OTHER vials of recipe R whose position_in_run >= 2 (leave-one-out: a vial never
@@ -16,9 +18,10 @@ contributes to its own reference). No such peer -> insufficient_evidence.
 FIXED RULE: tau = max(2.3, 3 * median(measurement_noise_dE over all eligible vials));
 decision = discard if CIE76(measured, reference) > tau else keep.
 
-Baseline "known colour check" (what the line does today): pass if the measured colour is within
-tau of ANY recipe's reference colour (the vial's own recipe uses the same leave-one-out
-reference), else fail. It cannot tell a wrong-but-known colour from the right one.
+Baseline: a stand-in for the line's known-colour check (pass if the colour is within tau of ANY
+recipe's reference colour; the real Teledyne outputs are not in the dataset). The vial's own
+recipe uses the same leave-one-out reference. Such a check cannot tell a wrong-but-known colour
+from the right one.
 """
 import numpy as np
 

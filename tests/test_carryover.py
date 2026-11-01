@@ -80,3 +80,38 @@ def test_no_steady_peers_is_insufficient_evidence():
     assert "no other recipe 6 vial" in rec[1]["reason"]
     assert rec[2]["decision"] == "insufficient_evidence"
     assert "no decision" in explain(rec[1])
+
+
+# --- script-level regressions (review of 2026-11-01); the scripts are loaded as modules, nothing is run ---
+
+def _load_script(name):
+    import importlib.util
+    path = os.path.join(os.path.dirname(__file__), "..", "scripts", name)
+    spec = importlib.util.spec_from_file_location(name[:-3], path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_demo_reads_tracker_exits_under_either_key():
+    demo = _load_script("carryover_demo.py")
+    new = {"tracker_exit_events": [{"track_id": "CV001", "frame": 10}], "line_crossings": []}
+    old = {"exits": [{"track_id": "CV002", "frame": 20}]}
+    assert demo.tracker_exits(new) == [{"track_id": "CV001", "frame": 10}]
+    assert demo.tracker_exits(old) == [{"track_id": "CV002", "frame": 20}]
+    assert demo.tracker_exits({}) == []
+
+
+def test_dataset_default_follows_fluidmix_data(monkeypatch, tmp_path):
+    monkeypatch.setenv("FLUIDMIX_DATA", str(tmp_path))
+    for name in ("carryover_video5.py", "carryover_demo.py", "carryover_lane_clip.py"):
+        module = _load_script(name)
+        assert module.default_dataset() == tmp_path.resolve() / "csi-vial-fill-dataset"
+        assert module.default_dataset(tmp_path / "elsewhere") == (tmp_path / "elsewhere").resolve()
+
+
+def test_attribution_rank_correlation_handles_ties():
+    attribution = _load_script("carryover_attribution.py")
+    assert attribution.rank_correlation([1, 2, 3, 4], [10, 20, 30, 40]) == 1.0
+    assert attribution.rank_correlation([1, 2, 3, 4], [40, 30, 20, 10]) == -1.0
+    assert list(attribution._ranks([5, 5, 1])) == [2.5, 2.5, 1.0]
