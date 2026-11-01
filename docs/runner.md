@@ -63,6 +63,14 @@ development evidence. A lossy re-encode is still a valid arbitrary input, but co
 alter a low-fill CNN mask and therefore may produce a different, honest abstention. The service
 does not replace its decoded evidence with measurements from the native file.
 
+The historical `0.90` / `discard` live-demo result is **hybrid, superseded evidence**: its tracker
+receipts came from H.264 while its pinned stage measurements and images came from native MJPEG.
+Those development VLM votes remain valid for the exact bundle they saw, but the result is not a
+single-source live regression. The genuinely live H.264 path measures stage-1 DeltaE76
+`1.149856 / 1.147971` and abstains in the frozen deadband. The runner never reconstructs the old
+hybrid path; each source now follows one frozen path and either produces supported evidence or a
+specific honest abstention.
+
 `GET /api/health` reports both the deployed service commit and a machine-readable
 `frozen_profile` object with geometry, timing, recipe, and artifact freeze hashes. The
 source frame rate comes from stream metadata, with PTS or measured-arrival fallback. The

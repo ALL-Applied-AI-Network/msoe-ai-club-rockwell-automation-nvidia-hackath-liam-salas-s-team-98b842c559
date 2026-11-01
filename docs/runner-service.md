@@ -59,10 +59,11 @@ RTSP user information and query credentials never enter public source labels or 
 errors. GPU selection still requires the explicit `FLUIDMIX_GPU_FREE=1` operator
 assertion; the service never inspects or changes another process.
 
-The repository-native factory requires a tracker, frozen CNN
-model, deterministic decider, VLM bundle builder, VLM runner, device and model identity. Those
-deployment artifacts and their paths are intentionally injected, and this pin change does not
-invent them. The exact CPU command that proves the accepted factory-attestation boundary is:
+The repository-native production factory wires the accepted tracker, frozen CNN, deterministic
+decision configuration, VLM bundle builder, three pinned model runtimes, device selection and
+model identities. The service commit is supplied by the post-commit build attestation; the
+accepted frozen implementation identity remains separate. The exact CPU command that proves the
+factory-attestation boundary is:
 
 ```bash
 PYTHONPATH=src python -m pytest \
@@ -70,13 +71,17 @@ PYTHONPATH=src python -m pytest \
   -q
 ```
 
-Before the HTTP service can start, an authorized deployment must supply a post-commit build
-attestation plus a real `MODULE:CALLABLE` factory with `accepted_pipeline_commit` and
-`development_cohort` attributes and all of those accepted artifacts. The service tests
-incremental decoding,
-`AcceptedPipelineAdapter`, SHA-bound CIELAB measurement, and the exact frozen-builder call
-seam. The expected pin is the reviewed implementation identity
-`9913b1a1cc5559cec9242072decabc3aaf2c4142`; it is not reported as the deployed service
-commit. The superseded `cf6829b` accepted identity and every missing or malformed identity
-remain unavailable.
-The tests prove service wiring, not camera accuracy, physical validity, or plant suitability.
+The launch still requires a post-commit build attestation and the ignored, hash-verified local
+model/artifact directories documented in [runner.md](runner.md). The service tests incremental
+decoding, `AcceptedPipelineAdapter`, SHA-bound CIELAB measurement, and the exact frozen-builder
+call seam. The expected accepted pin is
+`9913b1a1cc5559cec9242072decabc3aaf2c4142`; it is not reported as the deployed service commit.
+The superseded `cf6829b` identity and every missing or malformed identity remain unavailable.
+
+The historical `0.90` / `discard` demo result is hybrid, superseded evidence: H.264 tracker
+receipts were combined with pinned native-MJPEG stage measurements and images. The development
+VLM votes remain valid for that exact bundle, but the service never reconstructs it. The actual
+single-source H.264 path measures stage-1 DeltaE76 `1.149856 / 1.147971` and abstains in the
+frozen deadband. Arbitrary sources use one frozen path and may honestly abstain with a specific
+tracker, geometry or measurement reason. These tests prove service wiring, not camera accuracy,
+physical validity, or plant suitability.
