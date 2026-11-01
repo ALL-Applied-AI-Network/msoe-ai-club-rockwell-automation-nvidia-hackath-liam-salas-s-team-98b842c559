@@ -10,7 +10,7 @@ the tracker's or measurement layer's specific abstention reason. From the reposi
 after activating the documented ML environment and making the repository command visible:
 
 ```bash
-export PATH="$PWD:$PATH"
+export PATH="/home/hackathon5/liamreporoot/shared-ml-env/.venv/bin:$PWD:$PATH"
 export PYTHONPATH="$PWD/src:/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.vlm-overlay${PYTHONPATH:+:$PYTHONPATH}"
 export CPATH="/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/root/usr/include/python3.12:/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/root/usr/include/aarch64-linux-gnu/python3.12"
 export TRITON_CACHE_DIR="/home/hackathon5/liamreporoot/wp7-vlm-reasoning-grounded-liam-01a18128/.python-dev-overlay/triton-cache"
@@ -40,7 +40,7 @@ The default listener is `127.0.0.1:8765`. This accepted development concat is th
 end-to-end regression input, not an input allowlist:
 
 ```bash
-curl -sS -F source_kind=file -F file=@/home/hackathon5/liamreporoot/outputs/pipeline-20261028/runner-production-factory-01a18128/accepted-v4-train01-native-avi-concat.avi\;type=video/x-msvideo \
+curl -sS -F source_kind=file -F file=@/home/hackathon5/liamreporoot/outputs/pipeline-20261028/runner-production-factory-01a18128/accepted-v4-train01-cohort.mp4\;type=video/mp4 \
   -F 'run_context={"operator_run_id":"RUN-V4-TRAIN-01","recipe_id":"5","tray_id":"tray-v4-train-01"}' \
   http://127.0.0.1:8765/api/sessions
 ```
@@ -58,10 +58,15 @@ not consumed after the third vial closes. The accepted frozen artifacts currentl
 recipe `"5"`; another recipe fails closed as `unsupported_recipe_profile`, independently of
 the source transport or media identity.
 
-The regression command uses the native MJPEG cohort because its decoded pixels are the accepted
-development evidence. A lossy re-encode is still a valid arbitrary input, but codec changes can
-alter a low-fill CNN mask and therefore may produce a different, honest abstention. The service
-does not replace its decoded evidence with measurements from the native file.
+The regression command uses the recipe-compatible H.264 cohort because it is the best input that
+currently traverses the dynamic one-source path. At service commit `fe64833`, session
+`6a2e9d63c3034680b963b953d210c74e` stopped honestly with
+`measurement_stage_unavailable`: vial 1's stage-1 early `F0000` mask had zero post-topology pixels
+(`bottom_zone_component_missing`), although that stage's mid/end and every stage-2/3 phase were
+valid. The frozen all-three-phase aggregate therefore formed no VLM stage, so no bundle or model
+call was made. The native-MJPEG version is also a valid arbitrary input, but its stream is
+fragmented by the unchanged inner raw-DeltaE guard. The service does not replace evidence decoded
+from either source with measurements from the other.
 
 The historical `0.90` / `discard` live-demo result is **hybrid, superseded evidence**: its tracker
 receipts came from H.264 while its pinned stage measurements and images came from native MJPEG.

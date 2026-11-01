@@ -85,3 +85,11 @@ single-source H.264 path measures stage-1 DeltaE76 `1.149856 / 1.147971` and abs
 frozen deadband. Arbitrary sources use one frozen path and may honestly abstain with a specific
 tracker, geometry or measurement reason. These tests prove service wiring, not camera accuracy,
 physical validity, or plant suitability.
+
+The latest fully dynamic single-source development session (`6a2e9d63c3034680b963b953d210c74e`,
+service commit `fe64833`) stopped earlier with `measurement_stage_unavailable`: one selected
+phase lacked complete accepted CNN topology. Specifically, vial 1 stage 1 early `F0000` had a
+zero-pixel post-topology mask (`bottom_zone_component_missing`); its mid/end and all stage-2/3
+phases were valid. The frozen all-three-phase aggregate therefore retained no vial and made no
+model call. This is the current honest V4 TRAIN-01 live outcome; it does not invalidate the prior
+development VLM evidence for its exact bundle and is not replaced by hybrid evidence.
