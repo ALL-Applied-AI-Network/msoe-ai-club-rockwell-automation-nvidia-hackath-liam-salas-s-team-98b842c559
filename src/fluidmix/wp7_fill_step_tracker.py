@@ -130,6 +130,37 @@ def calibration_payload_sha256(calibration: PixelToMetreCalibration) -> str:
     return _canonical_sha256(payload)
 
 
+def select_stage_frame_candidates(
+    frames: Sequence[FrameEvidence],
+    recipe_pours: Sequence[RecipePour],
+    freeze: TrackerFreeze,
+    *,
+    previous_final_tank_id: str,
+) -> tuple[StageFrameSelection, ...]:
+    """Select authoritative camera-state frames without consulting CNN height."""
+
+    checked_freeze = _validate_freeze(freeze)
+    pours = _validate_pours(recipe_pours)
+    checked_frames = _validate_frames(frames)
+    if previous_final_tank_id not in ACTIVE_TANK_CYCLE:
+        raise FillStepTrackerError("previous final tank is not active")
+    segments = _completed_stage_segments(
+        checked_frames,
+        pours,
+        checked_freeze,
+        previous_final_tank_id=previous_final_tank_id,
+    )
+    return tuple(
+        StageFrameSelection(
+            fill_step=index,
+            early_frame_index=segment[0].frame_index,
+            mid_frame_index=segment[len(segment) // 2].frame_index,
+            end_frame_index=segment[-1].frame_index,
+        )
+        for index, segment in enumerate(segments, start=1)
+    )
+
+
 def track_fill_step(
     frames: Sequence[FrameEvidence],
     recipe_pours: Sequence[RecipePour],

@@ -21,6 +21,7 @@ from fluidmix.wp7_fill_step_tracker import (
     build_fill_step_receipt,
     calibration_payload_sha256,
     development_support_summary,
+    select_stage_frame_candidates,
     track_fill_step,
     validate_fill_step_receipt,
 )
@@ -108,6 +109,23 @@ def test_stream_changes_map_exact_cycle_and_select_each_stage_frames() -> None:
         (2, 20, 21, 22),
     ]
     assert result.limit_codes == ()
+
+
+def test_stage_candidates_are_camera_state_only_and_do_not_require_cnn_height() -> None:
+    frames = [replace(frame, visible_height_px=None) for frame in _two_stage_frames()]
+
+    selected = select_stage_frame_candidates(
+        frames,
+        _pours(),
+        _freeze(),
+        previous_final_tank_id="t400",
+    )
+
+    assert [(item.fill_step, item.early_frame_index, item.mid_frame_index,
+             item.end_frame_index) for item in selected] == [
+        (1, 10, 11, 12),
+        (2, 20, 21, 22),
+    ]
 
 
 def test_volume_stream_disagreement_is_the_only_state_abstention() -> None:
