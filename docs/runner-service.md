@@ -78,13 +78,15 @@ call seam. The expected accepted pin is
 `9913b1a1cc5559cec9242072decabc3aaf2c4142`; it is not reported as the deployed service commit.
 The superseded `cf6829b` identity and every missing or malformed identity remain unavailable.
 
-The historical `0.90` / `discard` demo result is hybrid, superseded evidence: H.264 tracker
-receipts were combined with pinned native-MJPEG stage measurements and images. The development
-VLM votes remain valid for that exact bundle, but the service never reconstructs it. The actual
-single-source H.264 path measures stage-1 DeltaE76 `1.149856 / 1.147971` and abstains in the
-frozen deadband. Arbitrary sources use one frozen path and may honestly abstain with a specific
-tracker, geometry or measurement reason. These tests prove service wiring, not camera accuracy,
-physical validity, or plant suitability.
+The historical `0.90` and `0.925` keep/discard live-demo projections are hybrid, superseded
+evidence: both combined H.264 tracking receipts with pinned native-MJPEG stage measurements and
+images. The development VLM votes remain valid for their exact bundles, but neither result is a
+current one-source keep/discard result and the service never reconstructs that hybrid path. The
+actual single-source H.264 path measures stage-1 DeltaE76 `1.149856 / 1.147971` and abstains in
+the frozen deadband. Arbitrary sources use one frozen path and may honestly abstain with a specific
+tracker, geometry or measurement reason. `tracker-freeze Option B` is HELD for Liam; no new tracker
+freeze is authorized. These tests prove service wiring, not camera accuracy, physical validity, or
+plant suitability.
 
 The latest fully dynamic single-source development session (`6a2e9d63c3034680b963b953d210c74e`,
 service commit `fe64833`) stopped earlier with `measurement_stage_unavailable`: one selected

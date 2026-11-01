@@ -68,13 +68,14 @@ call was made. The native-MJPEG version is also a valid arbitrary input, but its
 fragmented by the unchanged inner raw-DeltaE guard. The service does not replace evidence decoded
 from either source with measurements from the other.
 
-The historical `0.90` / `discard` live-demo result is **hybrid, superseded evidence**: its tracker
-receipts came from H.264 while its pinned stage measurements and images came from native MJPEG.
-Those development VLM votes remain valid for the exact bundle they saw, but the result is not a
-single-source live regression. The genuinely live H.264 path measures stage-1 DeltaE76
+The historical `0.90` and `0.925` keep/discard live-demo projections are **hybrid, superseded
+evidence**: both combined H.264 tracking receipts with native-MJPEG measurements and images.
+Those development VLM votes remain valid for the exact bundles they saw, but neither result is a
+current one-source keep/discard result. The genuinely live H.264 path measures stage-1 DeltaE76
 `1.149856 / 1.147971` and abstains in the frozen deadband. The runner never reconstructs the old
 hybrid path; each source now follows one frozen path and either produces supported evidence or a
-specific honest abstention.
+specific honest abstention. `tracker-freeze Option B` is HELD for Liam; no new tracker freeze is
+authorized.
 
 `GET /api/health` reports both the deployed service commit and a machine-readable
 `frozen_profile` object with geometry, timing, recipe, and artifact freeze hashes. The
