@@ -211,6 +211,8 @@ def test_bundle_is_hash_bound_path_free_and_has_all_early_mid_end_references(tmp
     assert built.prompt_payload["target_vial_position"] == 1
     scored = [row for row in built.prompt_payload["deterministic_evidence"] if "deterministic_disposition" in row]
     assert {row["vial_position"] for row in scored} == {1}
+    references = [row for row in built.prompt_payload["deterministic_evidence"] if row["vial_position"] != 1]
+    assert all("delta_e76_vial2" not in row and "delta_e76_vial3" not in row for row in references)
     assert built.prompt_payload["tracker_binding"]["claim_boundary"] == "camera_twin_geometry_equivalent_not_physical_ground_truth"
     assert built.prompt_payload["deterministic_binding"]["receipt_sha256"] == cohort["deterministic_decision_receipt"]["receipt_sha256"]
 

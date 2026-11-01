@@ -114,10 +114,11 @@ def _lab(value: object, role: str) -> list[float]:
 def _measurement(value: Mapping[str, object], *, target: bool) -> dict[str, object]:
     for field in ("median_lab", "mad_lab", "iqr_lab"):
         _lab(value[field], field)
-    for field in ("delta_e76_vial2", "delta_e76_vial3"):
-        _finite(value[field], field, 0.0)
-    if value["deterministic_disposition"] not in DISPOSITIONS:
-        raise ContractError("deterministic disposition is invalid")
+    if target:
+        for field in ("delta_e76_vial2", "delta_e76_vial3"):
+            _finite(value[field], field, 0.0)
+        if value["deterministic_disposition"] not in DISPOSITIONS:
+            raise ContractError("deterministic disposition is invalid")
     if not isinstance(value["evidence_id"], str) or not value["evidence_id"]:
         raise ContractError("evidence ID is invalid")
     if not isinstance(value["limit_codes"], list) or any(
@@ -126,7 +127,10 @@ def _measurement(value: Mapping[str, object], *, target: bool) -> dict[str, obje
         raise ContractError("deterministic limit codes are invalid")
     result = dict(value)
     if not target:
-        result.pop("deterministic_disposition")
+        for field in (
+            "deterministic_disposition", "delta_e76_vial2", "delta_e76_vial3"
+        ):
+            result.pop(field, None)
     return result
 
 
@@ -341,12 +345,18 @@ def build_vial1_bundle(
                 images.append({"image_id": image_id, "vial_position": vial["vial_position"], "stage_id": stage["stage_id"], "phase": phase})
             if not isinstance(stage.get("measurement"), Mapping):
                 raise ContractError("deterministic measurement is missing")
-            measurement_fields = {
-                "evidence_id", "median_lab", "mad_lab", "iqr_lab",
-                "delta_e76_vial2", "delta_e76_vial3",
-                "deterministic_disposition", "limit_codes",
+            measurement_base_fields = {
+                "evidence_id", "median_lab", "mad_lab", "iqr_lab", "limit_codes",
             }
-            if set(stage["measurement"]) != measurement_fields:
+            measurement_fields = measurement_base_fields | {
+                "delta_e76_vial2", "delta_e76_vial3",
+                "deterministic_disposition",
+            }
+            allowed_fields = (
+                {frozenset(measurement_fields)} if vial["vial_position"] == 1
+                else {frozenset(measurement_base_fields), frozenset(measurement_fields)}
+            )
+            if frozenset(stage["measurement"]) not in allowed_fields:
                 raise ContractError("deterministic measurement fields are not closed")
             projected_measurement = _measurement(
                 stage["measurement"], target=vial["vial_position"] == 1
@@ -412,8 +422,12 @@ def build_vial1_bundle(
         "stages": safe_stages, "images": images, "deterministic_evidence": evidence,
         "tracker_binding": {
             "receipt_sha256": [item["receipt_sha256"] for item in tracker],
+            "source_artifact_sha256": [item["source_artifact_sha256"] for item in tracker],
             "calibration_sha256": tracker[0]["calibration_sha256"],
             "claim_boundary": tracker[0]["claim_boundary"],
+            "validator_source_sha256": hashlib.sha256(
+                Path(__file__).with_name("wp7_fill_step_tracker.py").read_bytes()
+            ).hexdigest(),
         },
         "deterministic_binding": deterministic,
     }
