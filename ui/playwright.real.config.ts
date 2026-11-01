@@ -8,6 +8,7 @@ export default defineConfig({
   testDir: "./e2e",
   testMatch: /real-runner\.spec\.ts/,
   workers: 1,
+  outputDir: "test-results/playwright",
   use: { baseURL: "http://127.0.0.1:4173", viewport: { width: 1920, height: 1080 }, colorScheme: "dark", headless: true },
   webServer: {
     command: "npm run dev -- --host 127.0.0.1 --port 4173",

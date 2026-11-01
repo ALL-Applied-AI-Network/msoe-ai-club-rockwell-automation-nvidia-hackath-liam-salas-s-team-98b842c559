@@ -15,6 +15,7 @@ export default defineConfig({
     launchOptions: { args: ["--disable-features=IsolateOrigins"] },
   },
   expect: { timeout: 10_000 },
+  outputDir: "test-results/playwright",
   projects: [
     { name: "test-only", testMatch: /contract-simulator\.spec\.ts/ }
   ],
