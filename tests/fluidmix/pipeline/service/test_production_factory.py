@@ -93,6 +93,7 @@ def test_session_tracker_rotates_from_detected_fill_then_dwell():
 
 
 def test_session_tracker_keeps_first_empty_reference_during_gradual_stream_onset():
+    import hashlib
     from fluidmix.pipeline.service.production_factory import SessionVialTracker
 
     built = []
@@ -131,6 +132,98 @@ def test_session_tracker_keeps_first_empty_reference_during_gradual_stream_onset
     assert len(built) == 1
     assert int(built[0].reference[0, 0, 0]) == 10
     assert [(index, elapsed) for _frame, index, elapsed in built[0].frames] == [(0, 0.0)]
+    digest = hashlib.sha256()
+    for value in (10, 11, 12, 13, 14):
+        digest.update(np.full((4, 4, 3), value, dtype=np.uint8).tobytes())
+    assert wrapper._window_hash.hexdigest() == digest.hexdigest()
+
+
+def test_session_tracker_closes_on_topology_cleaned_empty_false_active_seam():
+    import hashlib
+    from types import SimpleNamespace
+    from fluidmix.pipeline.service.production_factory import SessionVialTracker
+    from fluidmix.wp7_fill_step_production import (
+        TopologyFreeze, postprocess_cnn_mask_topology,
+    )
+
+    topology = TopologyFreeze("a" * 64, "b" * 64, 0.5, 4, 392, 4, 8)
+    raw_noise = np.zeros((480, 640), dtype=bool)
+    raw_noise[300, 300:313] = True
+    cleaned = postprocess_cnn_mask_topology(raw_noise, **topology.parameters())
+    assert np.count_nonzero(raw_noise) == 13
+    assert not np.any(cleaned.mask)
+    assert cleaned.reason_code == "bottom_zone_component_missing"
+
+    built = []
+
+    class Tracker:
+        def __init__(self, reference):
+            self.reference = reference.copy()
+            self.frames = []
+            self.bound = None
+            self.topology = topology
+            self.predictor = lambda _rgb, _reference: SimpleNamespace(mask=raw_noise)
+
+        def observe(self, frame, *, frame_index, elapsed_seconds):
+            self.frames.append((frame.copy(), frame_index, elapsed_seconds))
+            return ()
+
+        def bind_source_artifact_sha256(self, digest):
+            self.bound = digest
+
+        def close(self):
+            return ({"fill_step": 1, "tank_id": "t200", "closed": True},)
+
+    def builder(_index, reference):
+        tracker = Tracker(reference)
+        built.append(tracker)
+        return tracker
+
+    states = iter(
+        ["t200"] * 12 + ["t400"] * 12 + ["t100"] * 12
+        + ["t100"] * 3 + ["t200"]
+    )
+    wrapper = SessionVialTracker(
+        builder, auto_close=True,
+        stream_state=lambda _frame, _reference: next(states),
+    )
+    wrapper.configure_source_profile({"fps": 10.0, "resolution": [640, 480]})
+    wrapper.observe(
+        np.full((480, 640, 3), 10, dtype=np.uint8),
+        frame_index=0, elapsed_seconds=0.0,
+    )
+    active_frames = []
+    for index in range(1, 37):
+        frame = np.full((480, 640, 3), 20 + index, dtype=np.uint8)
+        active_frames.append(frame)
+        wrapper.observe(frame, frame_index=index, elapsed_seconds=index / 10)
+
+    closed = ()
+    for offset, value in enumerate((80, 81, 82), start=37):
+        closed = wrapper.observe(
+            np.full((480, 640, 3), value, dtype=np.uint8),
+            frame_index=offset, elapsed_seconds=offset / 10,
+        )
+
+    assert closed and wrapper.completed_vial_count == 1
+    assert len(built[0].frames) == 36
+    digest = hashlib.sha256()
+    digest.update(np.full((480, 640, 3), 10, dtype=np.uint8).tobytes())
+    for frame in active_frames:
+        digest.update(frame.tobytes())
+    assert built[0].bound == digest.hexdigest()
+
+    prefix_digest = hashlib.sha256()
+    for value in (80, 81, 82):
+        prefix_digest.update(np.full((480, 640, 3), value, dtype=np.uint8).tobytes())
+    assert wrapper._window_hash.hexdigest() == prefix_digest.hexdigest()
+
+    wrapper.observe(
+        np.full((480, 640, 3), 90, dtype=np.uint8),
+        frame_index=40, elapsed_seconds=4.0,
+    )
+    assert len(built) == 2
+    assert np.all(built[1].reference == 80)
 
 
 def test_session_tracker_uses_injected_frame_rate_for_elapsed_and_vlm_timestamps():
@@ -214,7 +307,7 @@ def test_session_tracker_auto_closes_detected_windows_with_rolling_rgb_hashes(mo
         frame = np.full((480, 640, 3), index + 1, dtype=np.uint8)
         rows = wrapper.observe(frame, frame_index=index, elapsed_seconds=index / 10)
     digest = hashlib.sha256()
-    for index in range(2, 41):
+    for index in range(41):
         digest.update(np.full((480, 640, 3), index + 1, dtype=np.uint8).tobytes())
     assert [tracker.bound for tracker in built] == [digest.hexdigest()]
     assert wrapper.completed_vial_count == 1

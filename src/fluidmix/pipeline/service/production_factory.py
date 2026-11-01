@@ -277,6 +277,8 @@ class SessionVialTracker:
         self._candidate_state: str | None = None
         self._candidate_count = 0
         self._inactive_count = 0
+        self._seam_empty_count = 0
+        self._seam_frames: list[tuple[np.ndarray, np.ndarray]] = []
         self._profile_evidence: dict[str, object] | None = None
         self._source_resolution: list[int] | None = None
         self._native_frames: dict[int, tuple[np.ndarray, dict[str, object]]] = {}
@@ -343,12 +345,15 @@ class SessionVialTracker:
                                       "last_native_view": native_evidence}
         else:
             rgb = normalize_tracker_frame(frame)
+        source_pixels = native_rgb if self._auto_close else rgb
         if self._reference is None:
             self._reference = rgb.copy()
+            self._window_hash.update(memoryview(source_pixels).cast("B"))
             return ()
         if self._trackers[self._active] is None and self._stream_state is not None:
             state = self._stream_state(rgb, self._reference)
             if state is None:
+                self._window_hash.update(memoryview(source_pixels).cast("B"))
                 return ()
             self._trackers[self._active] = self._builder(self._active, self._reference)
         else:
@@ -356,8 +361,34 @@ class SessionVialTracker:
                 self._trackers[self._active] = self._builder(self._active, self._reference)
             state = self._detect_state(rgb)
         if state is None and self._canonical_index == 0:
+            self._window_hash.update(memoryview(source_pixels).cast("B"))
             return ()
         tracker = self._trackers[self._active]
+        expected = ["t200", "t400", "t100"]
+        complete = self._states[-3:] == expected if len(self._states) >= 3 else False
+        if self._auto_close and complete:
+            topology_empty = self._topology_cleaned_empty(tracker, rgb)
+            if topology_empty is True:
+                self._seam_empty_count += 1
+                self._seam_frames.append((rgb.copy(), source_pixels.copy()))
+                if self._seam_empty_count >= self._timing.stable_tail_source_frames:
+                    binder = getattr(tracker, "bind_source_artifact_sha256", None)
+                    if not callable(binder):
+                        raise ProductionFactoryError(
+                            "dynamic tracker cannot bind source provenance"
+                        )
+                    binder(self._window_hash.hexdigest())
+                    next_prefix = list(self._seam_frames)
+                    closed = self.close()
+                    self._window_hash = hashlib.sha256()
+                    self._reference = next_prefix[0][0]
+                    for _canonical, source_frame in next_prefix:
+                        self._window_hash.update(memoryview(source_frame).cast("B"))
+                    return closed
+                return ()
+            if topology_empty is False:
+                self._seam_empty_count = 0
+                self._seam_frames = []
         if self._window_started_seconds is None:
             self._window_started_seconds = float(elapsed_seconds)
         local_index = self._canonical_index
@@ -368,7 +399,6 @@ class SessionVialTracker:
             rgb, frame_index=local_index,
             elapsed_seconds=float(elapsed_seconds) - self._window_started_seconds,
         ))
-        source_pixels = native_rgb if self._auto_close else rgb
         self._window_hash.update(memoryview(source_pixels).cast("B"))
         if state is None:
             empty_candidate = True
@@ -395,7 +425,6 @@ class SessionVialTracker:
                 and (not self._states or self._states[-1] != state)
             ):
                 self._states.append(state)
-        expected = ["t200", "t400", "t100"]
         complete = self._states[-3:] == expected if len(self._states) >= 3 else False
         if (
             self._auto_close and complete
@@ -412,6 +441,21 @@ class SessionVialTracker:
             return observed + closed
         return observed
 
+    @staticmethod
+    def _topology_cleaned_empty(tracker: object, rgb: np.ndarray) -> bool | None:
+        predictor = getattr(tracker, "predictor", None)
+        topology = getattr(tracker, "topology", None)
+        parameters = getattr(topology, "parameters", None)
+        reference = getattr(tracker, "reference", None)
+        if not callable(predictor) or not callable(parameters) or reference is None:
+            return None
+        from fluidmix.wp7_fill_step_production import postprocess_cnn_mask_topology
+        prediction = predictor(rgb, reference)
+        cleaned = postprocess_cnn_mask_topology(
+            getattr(prediction, "mask", None), **parameters(),
+        )
+        return not np.any(cleaned.mask)
+
     def end_of_stream(self):
         """Close only vial 3 at EOF after its complete debounced recipe sequence."""
         if self._active != 2 or self._states[-3:] != ["t200", "t400", "t100"]:
@@ -420,6 +464,9 @@ class SessionVialTracker:
         binder = getattr(tracker, "bind_source_artifact_sha256", None)
         if not callable(binder):
             raise ProductionFactoryError("dynamic tracker cannot bind source provenance")
+        for _canonical, source_frame in self._seam_frames:
+            self._window_hash.update(memoryview(source_frame).cast("B"))
+        self._seam_frames = []
         binder(self._window_hash.hexdigest())
         return self.close()
 
@@ -508,6 +555,8 @@ class SessionVialTracker:
         self._candidate_state = None
         self._candidate_count = 0
         self._inactive_count = 0
+        self._seam_empty_count = 0
+        self._seam_frames = []
         self._reference = None
         self._native_frames = {}
         return tuple({
