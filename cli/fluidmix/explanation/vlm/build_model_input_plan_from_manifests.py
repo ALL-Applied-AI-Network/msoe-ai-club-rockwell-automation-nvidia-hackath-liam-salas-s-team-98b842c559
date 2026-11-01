@@ -30,7 +30,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    from fluidmix.explanation.vlm.model_input_plan_builder import write_model_input_plan
+    from fluidmix.pipeline.model_input_plan import write_model_input_plan
 
     write_model_input_plan(args.capture_manifest, args.batch_context, args.out)
     print(f"wrote model input plan: {args.out}")

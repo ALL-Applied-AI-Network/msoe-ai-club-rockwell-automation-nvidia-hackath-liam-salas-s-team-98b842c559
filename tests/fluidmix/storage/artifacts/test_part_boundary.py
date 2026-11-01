@@ -851,6 +851,7 @@ def test_part_boundary_manifest_registers_the_complete_current_boundary_inventor
         "fluidmix.perception.cnn.cnn_training",
         "fluidmix.measurement.varied_stage_measurement",
             "fluidmix.pipeline.model_plan_measurement",
+            "fluidmix.pipeline.model_input_plan",
             "fluidmix.pipeline.validation_stage_measurement",
             "fluidmix.pipeline.varied_stage_measurement",
         "fluidmix.decision.triage",

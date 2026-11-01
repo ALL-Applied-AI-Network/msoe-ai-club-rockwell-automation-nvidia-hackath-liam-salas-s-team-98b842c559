@@ -115,7 +115,7 @@ def test_programmed_recipe_rejects_all_zero_recipe(recipe_key):
 
 
 def test_builds_three_vial_decisions_with_all_reference_vials(tmp_path):
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     plan = build_model_input_plan(_captures(tmp_path), _context())
 
@@ -142,7 +142,8 @@ def test_builds_three_vial_decisions_with_all_reference_vials(tmp_path):
     ],
 )
 def test_rejects_unsafe_context(mutation, expected, tmp_path):
-    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError, build_model_input_plan
+    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     context = _context()
     mutation(context)
@@ -151,7 +152,7 @@ def test_rejects_unsafe_context(mutation, expected, tmp_path):
 
 
 def test_deterministic_for_manifest_argument_order(tmp_path):
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     paths = _captures(tmp_path)
     context = _context()
@@ -160,12 +161,39 @@ def test_deterministic_for_manifest_argument_order(tmp_path):
     assert left == right
 
 
+def test_pipeline_passes_bound_capture_values_to_plan_builder(tmp_path, monkeypatch):
+    import fluidmix.pipeline.model_input_plan as pipeline_plan
+
+    observed = []
+    original = pipeline_plan._build_model_input_plan
+
+    def tracked(captures, capture_hashes, context_rows, context_hash):
+        observed.append((captures, capture_hashes))
+        return original(captures, capture_hashes, context_rows, context_hash)
+
+    monkeypatch.setattr(pipeline_plan, "_build_model_input_plan", tracked)
+
+    result = pipeline_plan.build_model_input_plan(_captures(tmp_path), _context())
+
+    assert result["artifact_type"] == "model_input_plan"
+    assert observed and all(isinstance(capture, dict) for capture in observed[0][0])
+    assert set(observed[0][1]) == {"TARGET", "REF-A", "REF-B"}
+
+
+def test_invalid_context_fails_before_missing_capture_is_opened(tmp_path):
+    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
+
+    with pytest.raises(ModelInputPlanError, match="batch_context_schema_invalid"):
+        build_model_input_plan([tmp_path / "missing-capture.json"], {})
+
+
 def test_thin_reference_bank_builds_but_deterministic_evidence_abstains(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import (
         bind_stage_capture_manifest,
     )
     from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     names = ("TARGET", "REF-A")
     paths = _captures(tmp_path, names)
@@ -197,7 +225,7 @@ def test_same_run_reference_batches_do_not_manufacture_independence(tmp_path):
         bind_stage_capture_manifest,
     )
     from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     paths = _captures(tmp_path)
     context = _context()
@@ -223,7 +251,7 @@ def test_same_run_reference_batches_do_not_manufacture_independence(tmp_path):
 
 
 def test_preserves_nondefault_programmed_dispense_order(tmp_path):
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     paths = _captures(tmp_path)
     order = ["t100", "t200", "t400"]
@@ -250,7 +278,8 @@ def test_preserves_nondefault_programmed_dispense_order(tmp_path):
 
 
 def test_rejects_ambiguous_duplicate_recipe_representation(tmp_path):
-    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError, build_model_input_plan
+    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     context = _context()
     context["batches"][0]["programmed_dispense_order"] = ["t100", "t200", "t400"]
@@ -314,7 +343,7 @@ def test_public_cli_uses_strict_context_snapshot_and_refuses_clobber(tmp_path):
 def test_end_to_end_measured_evidence_and_no_clobber(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
     from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
-    from fluidmix.explanation.vlm.model_input_plan_builder import write_model_input_plan
+    from fluidmix.pipeline.model_input_plan import write_model_input_plan
     from fluidmix.explanation.template.stage_cosmos_explanation import stage_reference_response
 
     paths = _captures(tmp_path)
@@ -337,7 +366,7 @@ def test_four_target_batches_feed_frozen_twelve_decision_cosmos_matrix(tmp_path)
         bind_stage_capture_manifest,
     )
     from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
     from fluidmix.explanation.template.stage_cosmos_explanation import build_stage_attempt_plan
 
     names = ("TARGET", "TARGET-2", "TARGET-3", "TARGET-4", "REF-A", "REF-B")
@@ -395,7 +424,7 @@ def test_four_target_batches_feed_frozen_twelve_decision_cosmos_matrix(tmp_path)
 
 def test_measurement_denominators_report_invalid_images_by_reason(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
     from fluidmix.pipeline.model_plan_measurement import evaluate_model_plan
 
     paths = _captures(tmp_path)

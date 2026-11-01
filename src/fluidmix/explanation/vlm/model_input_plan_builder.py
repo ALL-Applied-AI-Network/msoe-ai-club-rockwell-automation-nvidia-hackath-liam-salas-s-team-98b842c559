@@ -13,15 +13,12 @@ import hashlib
 import json
 from pathlib import Path
 import math
-import os
 
 from ...core.io import load_strict_json_snapshot
-from ...storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
 from ...core.policy import (
     FORBIDDEN_DEPLOY_INPUT_FIELDS,
     PART_A_SIM_METADATA_FIELDS,
 )
-from ...measurement.vision_measurement import _publish_json_no_clobber
 
 
 SPLIT_VERSION = "inn-7-splits-v2"
@@ -219,28 +216,6 @@ def _validate_context(payload: Mapping[str, object]) -> list[dict[str, object]]:
     return sorted(result, key=lambda row: str(row["batch_id"]))
 
 
-def _bind_captures(capture_paths: Sequence[str | os.PathLike[str]]) -> tuple[list[dict[str, object]], dict[str, str]]:
-    if not capture_paths:
-        raise ModelInputPlanError("capture_manifests_missing")
-    bound: list[dict[str, object]] = []
-    hashes: dict[str, str] = {}
-    seen: set[str] = set()
-    for item in capture_paths:
-        path = Path(item)
-        try:
-            payload, snapshot = load_strict_json_snapshot(path)
-            capture = bind_stage_capture_manifest(payload, base_dir=path.parent)
-        except (OSError, ValueError) as error:
-            raise ModelInputPlanError("capture_manifest_invalid") from error
-        batch_id = _text(capture.get("batch_id"), "capture batch_id")
-        if batch_id in seen:
-            raise ModelInputPlanError("duplicate_capture_batch")
-        seen.add(batch_id)
-        hashes[batch_id] = str(snapshot["sha256"])
-        bound.append(capture)
-    return bound, hashes
-
-
 def _candidate(
     batch: Mapping[str, object], vial: str, stage_id: str, *, origin: str = "reference_bank"
 ) -> dict[str, object]:
@@ -292,18 +267,49 @@ def _capture_stage_slots(capture: Mapping[str, object]) -> tuple[dict[str, objec
 
 
 def build_model_input_plan(
-    capture_manifests: Sequence[str | os.PathLike[str]],
-    batch_context: object,
+    captures: Sequence[Mapping[str, object]],
+    capture_hashes: Mapping[str, str],
+    context_rows: Sequence[Mapping[str, object]],
+    context_hash: str,
 ) -> dict[str, object]:
     """Build one deterministic allowlisted model-input plan.
 
-    ``capture_manifests`` are paths to strict raw manifests.  ``batch_context``
-    may be its already-loaded object or a strict JSON path.
+    All arguments are validated values projected by pipeline boundaries.
     """
-    context_payload, context_hash = _load_context(batch_context)
-    context_rows = _validate_context(context_payload)
-    captures, capture_hashes = _bind_captures(capture_manifests)
-    capture_by_batch = {_text(row.get("batch_id"), "capture batch_id"): row for row in captures}
+    if (
+        not isinstance(captures, Sequence)
+        or isinstance(captures, (str, bytes))
+        or not captures
+        or any(not isinstance(capture, Mapping) for capture in captures)
+    ):
+        raise ModelInputPlanError("bound_captures_invalid")
+    if not isinstance(capture_hashes, Mapping):
+        raise ModelInputPlanError("capture_hashes_invalid")
+    captures = list(captures)
+    if (
+        not isinstance(context_rows, Sequence)
+        or isinstance(context_rows, (str, bytes))
+        or not context_rows
+        or any(not isinstance(row, Mapping) for row in context_rows)
+        or not isinstance(context_hash, str)
+        or len(context_hash) != 64
+    ):
+        raise ModelInputPlanError("validated_context_invalid")
+    context_rows = [dict(row) for row in context_rows]
+    capture_ids = [_text(row.get("batch_id"), "capture batch_id") for row in captures]
+    if len(set(capture_ids)) != len(capture_ids):
+        raise ModelInputPlanError("duplicate_capture_batch")
+    if (
+        set(capture_hashes) != set(capture_ids)
+        or any(
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(character not in "0123456789abcdef" for character in digest)
+            for digest in capture_hashes.values()
+        )
+    ):
+        raise ModelInputPlanError("capture_hashes_invalid")
+    capture_by_batch = dict(zip(capture_ids, captures, strict=True))
     context_by_batch = {str(row["batch_id"]): row for row in context_rows}
     if set(capture_by_batch) != set(context_by_batch):
         raise ModelInputPlanError("context_capture_batch_set_mismatch")
@@ -509,15 +515,13 @@ def build_model_input_plan(
     return result
 
 
-def write_model_input_plan(
-    capture_manifests: Sequence[str | os.PathLike[str]],
+def validate_model_plan_context(
     batch_context: object,
-    output_path: str | os.PathLike[str],
-) -> dict[str, object]:
-    """Build and atomically publish a new plan, refusing an existing target."""
-    plan = build_model_input_plan(capture_manifests, batch_context)
-    _publish_json_no_clobber(Path(output_path), plan)
-    return plan
+) -> tuple[list[dict[str, object]], str]:
+    """Validate context before pipeline opens any capture manifest."""
 
-
-build_model_input_plan_from_manifests = build_model_input_plan
+    context_payload, context_hash = _load_context(batch_context)
+    context_rows = _validate_context(context_payload)
+    if not isinstance(context_hash, str):
+        raise ModelInputPlanError("batch_context_hash_invalid")
+    return context_rows, context_hash

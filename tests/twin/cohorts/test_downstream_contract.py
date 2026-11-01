@@ -219,7 +219,7 @@ def _pipeline(tmp_path: Path, names: tuple[str, ...], *, run_ids=None):
         bind_stage_capture_manifest,
     )
     from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     paths: list[Path] = []
     manifests: list[dict[str, object]] = []
@@ -354,7 +354,8 @@ def test_two_external_batches_from_one_external_run_are_insufficient(tmp_path):
 
 
 def test_context_cannot_forge_external_run_identity(tmp_path):
-    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError, build_model_input_plan
+    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     names = ("TARGET", "REF-A", "REF-B")
     paths = []
@@ -373,7 +374,7 @@ def test_context_cannot_forge_external_run_identity(tmp_path):
 def test_predicted_mask_quality_failure_propagates_and_abstains(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
     from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     manifests = [
         _manifest(tmp_path / name, name) for name in ("TARGET", "REF-A", "REF-B")
@@ -543,7 +544,8 @@ def test_stage_event_mismatch_fails_closed(tmp_path):
     ],
 )
 def test_central_deploy_allowlist_rejects_f2_oracles(tmp_path, field, value):
-    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError, build_model_input_plan
+    from fluidmix.explanation.vlm.model_input_plan_builder import ModelInputPlanError
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     names = ("TARGET", "REF-A", "REF-B")
     paths = []
@@ -562,7 +564,7 @@ def test_central_deploy_allowlist_rejects_f2_oracles(tmp_path, field, value):
 def test_f2_decision_config_is_hash_bound(tmp_path):
     from fluidmix.storage.artifacts.capture_manifest_adapter import bind_stage_capture_manifest
     from fluidmix.pipeline.model_plan_measurement import build_measured_evidence
-    from fluidmix.explanation.vlm.model_input_plan_builder import build_model_input_plan
+    from fluidmix.pipeline.model_input_plan import build_model_input_plan
 
     names = ("TARGET", "REF-A", "REF-B")
     paths = []

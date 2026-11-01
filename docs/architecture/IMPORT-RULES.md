@@ -63,7 +63,10 @@ cause-specific repair. The original inventory remains below so no violation is h
   varied-measurement perception import are absent. Three evaluation-only facades retain
   the public CLI behavior. The graph now has 170 files and 239 dependencies;
   product-ring violations fell from 7 to 4.
-- Current contracts: evaluation leaf kept; product onion broken by 4 direct edges;
+- Cause 7 passes storage-bound captures and exact manifest hashes through pipeline into
+  the explanation model-input builder. Explanation no longer imports storage. The graph
+  now has 171 files and 241 dependencies; product-ring violations fell from 4 to 3.
+- Current contracts: evaluation leaf kept; product onion broken by 3 direct edges;
   twin/product independence broken by 22 direct edges (17 twin-to-product and 5
   product-to-twin). Inner-ring purity remains the original 24 passing modules and 10
   failing modules with 36 findings.

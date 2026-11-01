@@ -151,6 +151,7 @@ EVALUATION_ONLY_MODULES = frozenset(
         "twin.cohorts.varied_image_locator",
         "fluidmix.measurement.varied_stage_measurement",
         "fluidmix.pipeline.model_plan_measurement",
+        "fluidmix.pipeline.model_input_plan",
         "fluidmix.pipeline.validation_stage_measurement",
         "fluidmix.pipeline.varied_stage_measurement",
         "fluidmix.decision.triage",
