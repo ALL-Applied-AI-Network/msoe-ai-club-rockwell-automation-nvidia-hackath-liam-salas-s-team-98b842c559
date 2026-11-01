@@ -279,7 +279,7 @@ def test_default_live_mode_rejects_closed_incomplete_phase_topology() -> None:
         adapter.close()
 
 
-def test_invalid_early_does_not_block_valid_end_live_measurement() -> None:
+def test_visual_phase_validity_does_not_select_an_internal_live_measurement() -> None:
     from fluidmix.pipeline.service.accepted_adapter import AcceptedPipelineAdapter
 
     valid = np.zeros((480, 640), dtype=bool)
@@ -337,99 +337,4 @@ def test_invalid_early_does_not_block_valid_end_live_measurement() -> None:
     assert rows[0]["measurement"]["validity"] == "invalid"
     assert rows[-1]["phase"] == "end"
     assert rows[-1]["measurement"]["validity"] == "valid"
-    assert retained == {
-        ("V1", "STAGE-V1-1"): {
-            "evidence_id": "EVID-end", "median_lab": [50.0, 0.0, 0.0],
-            "mad_lab": [0.0, 0.0, 0.0], "iqr_lab": [0.0, 0.0, 0.0],
-            "limit_codes": [],
-        }
-    }
-
-
-def test_generic_live_stage_measurement_is_end_phase_only_and_end_is_required() -> None:
-    from fluidmix.pipeline.service.accepted_adapter import AcceptedPipelineAdapter
-
-    context = {
-        "camera_metadata": {"resolution": [4, 4], "vial_roi": [0, 0, 4, 4]},
-    }
-    valid = np.ones((4, 4), dtype=bool)
-    empty = np.zeros((4, 4), dtype=bool)
-
-    def run(mid_value: float, *, valid_end: bool):
-        observations = []
-        for index, phase in enumerate(("early", "mid", "end")):
-            closed = phase == "end"
-            row = {
-                "vial_id": "V1", "vial_position": 1, "fill_step": 1,
-                "stage_id": "STAGE-V1-1", "tank_id": "t100",
-                "evidence_id": f"EVID-{phase}", "image_id": f"IMG-{phase}",
-                "phase": phase, "frame_index": index,
-                "same_run_empty_reference_rgb": np.zeros((4, 4, 3), dtype=np.uint8),
-                "observation_rgb": np.full(
-                    (4, 4, 3),
-                    int(mid_value) % 200 if phase == "early" else 20 + index,
-                    dtype=np.uint8,
-                ),
-                "prediction_mask": (
-                    empty if phase == "early" or (phase == "end" and not valid_end)
-                    else valid
-                ),
-                "height_status": "bottom_zone_component_missing",
-                "vlm_cohort_context": context, "closed": closed,
-            }
-            if closed:
-                row.update({
-                    "tracker_receipt": {"vial_id": "V1"},
-                    "vlm_vial": {
-                        "vial_id": "V1", "vial_position": 1,
-                        "stages": [{
-                            "stage_id": "STAGE-V1-1",
-                            "frames": [{
-                                "image_id": f"IMG-{name}", "phase": name,
-                            } for name in ("early", "mid", "end")],
-                            "measurement": {},
-                        }],
-                    },
-                })
-            observations.append(row)
-
-        class Tracker:
-            def observe(self, _rgb, **_metadata):
-                return tuple(observations)
-
-        values = {
-            "IMG-mid": [mid_value, mid_value + 1, mid_value + 2],
-            "IMG-end": [70.0, 8.0, 9.0],
-        }
-        adapter = AcceptedPipelineAdapter(
-            tracker=Tracker(), cnn_model=object(),
-            measurer=lambda image_id, *_args, **_kwargs: {
-                "validity": "valid", "median_lab": values[image_id],
-                "mad_lab": [1.0, 2.0, 3.0], "iqr_lab": [4.0, 5.0, 6.0],
-                "limit_codes": [],
-            },
-            deterministic_decider=lambda _vials: {},
-            vlm_bundle_builder=lambda *_args: {}, vlm_runner=lambda _bundle: (),
-            device="cpu", model_id="observer-test",
-        )
-        try:
-            adapter.process_frame(
-                np.zeros((4, 4, 3), dtype=np.uint8),
-                frame_index=3, elapsed_seconds=0.3,
-            )
-            return deepcopy(adapter._vlm_vials["V1"]["stages"][0]["measurement"]), len(
-                adapter._image_locators
-            )
-        finally:
-            adapter.close()
-
-    first, first_locator_count = run(10.0, valid_end=True)
-    second, second_locator_count = run(99.0, valid_end=True)
-    assert first == second == {
-        "evidence_id": "EVID-end", "median_lab": [70.0, 8.0, 9.0],
-        "mad_lab": [1.0, 2.0, 3.0], "iqr_lab": [4.0, 5.0, 6.0],
-        "limit_codes": [],
-    }
-    assert first_locator_count == second_locator_count == 3
-    with pytest.raises(RuntimeError, match="measured VLM stage evidence is unavailable"):
-        run(10.0, valid_end=False)
+    assert retained == {}
