@@ -23,7 +23,7 @@ REVIEW = PIPELINE_ROOT / "wp5-cnn-harness-recovery-01a18128/replay-9edd739/indep
 TRACKER_MATERIALIZATION = PIPELINE_ROOT / "wp7-fill-step-tracker-dev-01a18128-attempt04/development-materialization-receipt.json"
 TRACKER_TRAIN_FREEZE = PIPELINE_ROOT / "wp7-fill-step-tracker-dev-01a18128-attempt04/attempt04-train-freeze.json"
 TOPOLOGY_FREEZE = PIPELINE_ROOT / "wp7-fill-step-topology-freeze-01a18128-attempt03/topology-freeze.json"
-VLM_FREEZE = PIPELINE_ROOT / "wp7-vlm-development-freeze-01a18128-attempt14-tracker-source-rebind/freeze.json"
+VLM_FREEZE = PIPELINE_ROOT / "wp7-vlm-development-freeze-01a18128-attempt16-free-explanations/freeze.json"
 VLM_MATERIALIZATION_ROOT = PIPELINE_ROOT / "wp7-vlm-dev-bundle-materializer-01a18128-attempt15"
 CALIBRATION = PIPELINE_ROOT / "wp7-video5-attempt03-preclaim-01a18128/pixel-calibration.json"
 V4_PLAN = ARTIFACT_ROOT / "f2-varied-v4-package-660bc43/render-schedule-plan.json"
@@ -46,7 +46,7 @@ EXPECTED_HASHES = {
     TRACKER_MATERIALIZATION: "255319ca4df8e668b0bceaaf211642cabcd59983a4a023163b0bfbf5a8a323ce",
     TRACKER_TRAIN_FREEZE: "876a2c5813eba6f2cbd018a16c144e5a9d28ca9cbf1170ba4529e5c212392206",
     TOPOLOGY_FREEZE: "62e56a9e2423b09b25cf735452ebdd36adfa056bf8f8821c3fc173dbc6415a3f",
-    VLM_FREEZE: "73483f25f6cf138c6424cc8a4247705493a74eaf817c734299f042565ecd84c5",
+    VLM_FREEZE: "f77fb8b7568804bd15baa75845469ec0c86b4b82664f6fa8fd322622765d8ad3",
     VLM_MATERIALIZATION_ROOT / "cohort.json": "540d71864adf9b83411f73728c958f365d55ba28a2091963cf5707ea06012594",
     VLM_MATERIALIZATION_ROOT / "materialization-receipt.json": "bd6d976a9e3bee54da61f554fd117ecb4485b0017d57440e59b8f99d00819ad7",
     CALIBRATION: "a8963d8081999ed8b011ef7078d9f9358938c29dae1073a56a0f4daf7ffd23f5",
@@ -206,7 +206,7 @@ def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) ->
         if _sha(Path(path)) != expected:
             raise ProductionFactoryError(f"accepted artifact SHA-256 mismatch: {path}")
     freeze = json.loads(VLM_FREEZE.read_bytes())
-    if freeze.get("schema_version") != "wp7-vlm-development-freeze-v11" or {
+    if freeze.get("schema_version") != "wp7-vlm-development-freeze-v12" or {
         row.get("repository"): row.get("revision")
         for row in freeze.get("models", []) if isinstance(row, Mapping)
     } != MODEL_REVISIONS:
