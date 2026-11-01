@@ -1,6 +1,6 @@
 # Five-minute video: script and shot list
 
-Target 5:00. Narration is about 800 words: about 5:20 at 150 words a minute, so read briskly and use the trim guidance below if a take runs long.
+Target 5:00. Narration is about 810 words: about 5:20 at 150 words a minute, so read briskly and use the trim guidance below if a take runs long.
 Each block names the shot and where the asset is. Record narration over screen captures; no slides are
 needed beyond the three title cards.
 
@@ -30,21 +30,21 @@ clip with `scripts/topdown/demo_overlay.py VIDEO START END OUT.mp4`, a live run 
 
 > The pipeline is fail-closed: it tracks each vial from the top-down camera, measures the dispense and the
 > vial colour, compares that colour with the settled colour of the vial's own recipe, and returns keep,
-> discard or insufficient evidence with the measurements attached. Every learned part is trained on an
-> Isaac Sim twin of the station, never on line footage.
+> discard or insufficient evidence with the measurements attached. Every part we trained was trained on an
+> Isaac Sim twin of the station, never on line footage; the only pretrained model is SAM 2, used as is.
 
 **0:55 to 1:55, the measured result.** *Shot: demo_v4.mp4 full screen for 20 s (no narration over the first
 5 s, let the three panels run), then the scoreboard's official-scores bars.*
 
-> Left, the real camera; middle, the team's YOLO baseline; right, our U-Net. Both were trained only on
-> synthetic twin renders. We scored both on all five real recordings, a hundred and five thousand frames,
-> with a frozen harness and a floor derived from synthetic validation. No real frame was used for
+> Left, the real camera; middle, the team's YOLO baseline; right, our U-Net, both trained only on twin
+> renders. We scored both on all five real recordings, a hundred and five thousand frames, with a frozen
+> harness and a floor from synthetic validation. No real frame was used for
 > training, checkpoint selection or the threshold, but all five videos were scored while we searched for
 > the augmentation recipe: exposed validation, not a held-out test. Ours is ahead on
 > per-frame detection, precision point nine five seven against point nine four five, recall point nine
 > two against point eight seven three, and behind on track identity coverage, point six five against
 > point seven eight. Liam, who also ran the iteration, reviewed the labels on videos two and four, one
-> frame per run of disagreement plus a spot check: a hundred forty-seven items, one missing cap found.
+> frame per run of disagreement plus a spot check: a hundred forty-eight items, one missing cap found.
 > Videos one, three and five remain unreviewed drafts.
 
 **1:55 to 2:25, how it got there.** *Shot: real41_lane.jpg (model firing on fixtures), then aug53.jpg
@@ -68,11 +68,10 @@ vial_fill video with burst markers.*
 before its crossing, then `docs/assets/carryover/attribution.png`.*
 
 > The whole chain on one real recording, three cameras in lockstep. Left, the tanks. Middle, the fill
-> station: the programmed recipe, the measured colour, the recipe's settled colour, and a fixed rule that
-> turns the difference into keep or discard. Right, the top-down tracker giving that vial its camera ID:
-> twenty-seven of thirty decisions carry one, unverified by any label, eighteen followed to the reference
-> line, like this one. Now the physics. The first vial after every changeover sits a median
-> twenty-three colour units from its recipe's settled colour; the second vial, two. That error points at
+> station: the recipe, the measured colour, the recipe's settled colour, and a fixed rule that turns the
+> difference into keep or discard. Right, the top-down tracker giving that vial its camera ID: twenty-seven
+> of thirty decisions carry one, unverified by any label, eighteen followed to the line, like this one. The first vial after every changeover sits a median
+> twenty-three colour units from its recipe's settled colour; the second vial, two point three. That error points at
 > the previous recipe, cosine point nine seven: a mix of the vial's own recipe and the one before it,
 > larger for larger recipe changes in six of eight changeovers, gone two vials later. Carryover, measured
 > and attributed to its cause. A stand-in for the line's own colour check passes this vial, because its
@@ -98,9 +97,10 @@ the real frame.*
 
 **4:40 to 5:00, close.** *Shot: repository README on screen.*
 
-> Everything except the data and the two 1.1 MB weights is in the repository: the code, the protocols and
-> sha256 receipts, the harness reports, the review decisions, the carryover run and the scripts that
-> reproduce every number; the weights are on the team's Spark. Team Mixture Of Experts.
+> The code, the protocols and sha256 receipts, the harness reports, the review decisions and the carryover
+> scripts are in the repository, and the carryover numbers reproduce from a clean clone. The weights, the
+> frozen scorer, the draft labels and the clips are on the team's Spark, named by path and hash. Team
+> Mixture Of Experts.
 
 ---
 
@@ -109,6 +109,6 @@ the real frame.*
 - Screen-record the demo clips at full resolution; keep the first 5 s of demo_v4 silent. The carryover
   clip is 1936 x 550; letterbox it rather than crop the side panels.
 - Read the numbers as written; they match the README tables and docs/carryover-video5.md exactly.
-- Narration is about 800 words. If a take runs long, trim the 0:00 and 4:05 blocks first; keep the
-  exposed-validation sentence, the coverage line, the label-review sentence and the "Everything except" close.
+- Narration is about 810 words. If a take runs long, trim the 0:00 and 4:05 blocks first; keep the
+  exposed-validation sentence, the coverage line, the label-review sentence and the close.
 - Export at 1080p; the five-minute limit is approximate per the organizers.
