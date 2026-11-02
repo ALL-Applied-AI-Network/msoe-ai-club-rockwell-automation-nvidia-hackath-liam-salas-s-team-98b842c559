@@ -1,218 +1,276 @@
-# Fill-level CNN results (draft through Step 8)
+# Fill-level CNN results
 
-Status: **draft through Step 8; not a final project result.** The project remains
-STOPped pending the user's decision. Step 9 has not started. No test-render manifest or
-image and no real-check vial was opened or scored for this draft; those results are
-unchecked.
+Status: **measured through Step 10; final Step 12 results write-up.** The frozen
+Revision 2 model was evaluated once on 560 held-out synthetic renders and once on
+1,470 approved frames from 27 real-check vials. Neither result was used to tune the
+model, rule, ruler or evaluator.
 
-The current result is negative for real-world transfer. A four-class segmentation model
-trained only on synthetic renders reached about 0.97 macro intersection-over-union (IoU)
-on synthetic validation, but it could not produce two valid calibration points from the
-permitted video-5 vials. One disclosed revision improved a fixed synthetic darkness test
-but also failed the single permitted repeat calibration. No row-to-mL ruler was created,
-and no physical or real-world accuracy is claimed.
+The result is mixed and does not establish production-ready physical accuracy. On the
+held-out synthetic test, typical visible error was 0 mL and passed the frozen 1 mL
+target, but p95 error was 2.20 mL against a 2 mL target and hidden success was 94.4%
+against a 95% target. On the real check, 19 vials produced visible readings with median
+absolute error 2.43 mL, but p95 was 23.0 mL and the four worst visible readings were
+14.9-23.6 mL high. Eight vials were called hidden; their approximately 30.3 mL ranges
+contained the recipe value in five cases.
+
+The synthetic validation gates and real calibration both failed. Calibration and Steps
+9 and 10 nevertheless ran under explicit user decisions, with the failures retained and
+disclosed below.
 
 ## Evidence labels and scope
 
-- **Measured** means produced by a recorded run and tied to a committed compact summary or
-  an ignored checksum manifest.
-- **Source-file observation** means read from the organizer twin, the plan or another
-  versioned input; it is not a model result.
+- **Measured** means produced by a recorded run and tied to a committed compact summary
+  or an ignored checksum manifest.
+- **Source-file observation** means read from the organizer twin, plan, recipe file or
+  another versioned input; it is not a model result.
 - **Qualitative diagnostic** means a bounded visual inspection used to explain a failure;
   it is not an accuracy score.
-- **Interpretation** explains the evidence but is not itself a measurement.
-- **Unchecked** means the reserved test or real-check result does not exist yet.
+- **Interpretation** explains measured evidence but is not itself a measurement.
+- **Proposal** is an untested future direction, not a result or authorization.
 
-Video-5 vials 1 and 13 are calibration evidence, not independent validation. Revision 1
-was informed by the first calibration failure, so its second calibration result is a
-disclosed development result rather than an unbiased test. No model was trained on real
-frames.
+No model was trained on real frames. Video-5 vials 1 and 13 were calibration evidence,
+not independent validation. The held-out synthetic test and 27-vial real check were each
+measured once after their evaluators were frozen. Raw renders, masks, model weights and
+real frames remain outside Git.
 
 ## Evidence inventory
 
 | Claim | Evidence label | Versioned or checksum-bound source |
 |---|---|---|
-| Camera targets and organizer-twin hashes | Source-file observation and measured projection | [`assets/fill-level/camera-match.json`](../assets/fill-level/camera-match.json), SHA-256 `aeee0c5e...afc2f8`, commit `c3544ba` |
-| Label semantics, variation and split contract | Source-file observation and implementation decision | [`assets/fill-level/render-contract.json`](../assets/fill-level/render-contract.json), SHA-256 `70d87087...a3258`, commit `7e8f98f` |
-| Twenty-frame pilot and renderer choice | Measured | [`assets/fill-level/pilot-summary.json`](../assets/fill-level/pilot-summary.json), SHA-256 `6fc753fa...f29ca`, commit `31beb9f` |
-| Full 3,800-frame synthetic batch | Measured | [`assets/fill-level/full-batch-summary.json`](../assets/fill-level/full-batch-summary.json), SHA-256 `e736d17e...d88c0`, commit `a8592bf` |
-| Original training and exception audit | Measured | [`assets/fill-level/step7-training-summary.json`](../assets/fill-level/step7-training-summary.json), SHA-256 `799fc3af...5c88`; [`assets/fill-level/step7-exception-review.json`](../assets/fill-level/step7-exception-review.json), SHA-256 `6ef12c4a...6130f`; commit `366249e` |
-| Frozen validation rule and first calibration failure | Measured | [`assets/fill-level/step8-validation-surface-summary.json`](../assets/fill-level/step8-validation-surface-summary.json), SHA-256 `797a2bb8...7e12`; [`assets/fill-level/step8-calibration-failure-summary.json`](../assets/fill-level/step8-calibration-failure-summary.json), SHA-256 `8ac1ff33...775e3`; commit `74e713b` |
-| Revision 1 and second calibration failure | Measured development result | [`assets/fill-level/step8-revision1-failure-summary.json`](../assets/fill-level/step8-revision1-failure-summary.json), SHA-256 `4b3375d6...7cbb9`, commit `cada81e` |
-| Six-frame original/revised overlays and row profiles | Qualitative diagnostic, ignored | `outputs/fill-level-cnn/step8-diagnostics-20261101-codex-01/diagnostics-attempt-01-20261101T103833Z/`; summary SHA-256 `1d1adb1c...dd21`, evidence manifest SHA-256 `1d19bab1...9176` |
+| Camera targets and organizer-twin hashes | Source-file observation and measured projection | [`camera-match.json`](../assets/fill-level/camera-match.json), commit `c3544ba` |
+| Label semantics, variation and split contract | Source-file observation and implementation decision | [`render-contract.json`](../assets/fill-level/render-contract.json), commit `7e8f98f` |
+| Full 3,800-frame Step 6 batch | Measured | [`full-batch-summary.json`](../assets/fill-level/full-batch-summary.json), commit `a8592bf` |
+| Original training and exception audit | Measured | [`step7-training-summary.json`](../assets/fill-level/step7-training-summary.json), [`step7-exception-review.json`](../assets/fill-level/step7-exception-review.json), commit `366249e` |
+| Original validation and first calibration failure | Measured | [`step8-validation-surface-summary.json`](../assets/fill-level/step8-validation-surface-summary.json), [`step8-calibration-failure-summary.json`](../assets/fill-level/step8-calibration-failure-summary.json), commit `74e713b` |
+| Revision 1 and second calibration failure | Measured development result | [`step8-revision1-failure-summary.json`](../assets/fill-level/step8-revision1-failure-summary.json), commit `cada81e` |
+| Revision 2 combined data and training | Measured synthetic-only; validation-selected | [`step8-r2-combined-batch-summary.json`](../assets/fill-level/step8-r2-combined-batch-summary.json), SHA-256 `bfe6650e...d6b5`, commit `fe545ae`; [`step8-r2-training-summary.json`](../assets/fill-level/step8-r2-training-summary.json), SHA-256 `728991a8...0930`, commit `1f5148b` |
+| Revision 2 validation and failed calibration | Measured on synthetic validation / permitted real calibration | [`step8-r2-validation-summary.json`](../assets/fill-level/step8-r2-validation-summary.json), compact/full SHA-256 `0a176ffc...92f5` / `04bb91db...cde61d`; [`step8-r2-calibration-failure-summary.json`](../assets/fill-level/step8-r2-calibration-failure-summary.json), SHA-256 `bc34399a...8729`; commit `87cbf32` |
+| Hand-measured two-point ruler | Source-file observation from Step 3 hand measurements | SHA-256 `c1d2f112...1333`, frozen in `45292f1` |
+| Frozen held-out test | Measured once on held-out synthetic test and untuned | [`step9-r2-test-summary.json`](../assets/fill-level/step9-r2-test-summary.json), compact/full SHA-256 `e748bfda...199d` / `0eb50c97...8b1f`; evaluator freeze `45292f1`, result `a2a1ee9` |
+| Frozen real check | Measured once on 27 reserved real-check vials and untuned | [`step10-real-check-summary.json`](../assets/fill-level/step10-real-check-summary.json), compact/full/frame-ledger SHA-256 `5a0ad63b...036` / `c91bdddd...db32` / `c65f6b9c...78256`; evaluator freeze `4d9a34a`, result `fa298ee` |
 
-The detailed chronological record is the
-[`fill-level-cnn-log.md`](work/fill-level-cnn-log.md). Raw renders, masks, real frames and
-model weights remain outside Git.
+The detailed chronological record is
+[`fill-level-cnn-log.md`](work/fill-level-cnn-log.md). Ignored evidence is bound by the
+hash manifests recorded there.
 
 ## Synthetic data and rendering
 
-- **Measured, Step 1:** the local Python environment was created and the synthetic
-  absorbance smoke passed. The full local suite did not pass cleanly because OpenCV was then
-  missing from the development requirements and the Windows checkout did not materialize the
-  required skills symlink; those setup limits are not model evidence.
-- **Measured, Step 2:** Isaac Sim 6.0.1 on the existing NVIDIA L40S produced a recognizable
-  640x480 FillCam smoke render. The successful warm-cache render took 31.262 seconds; its raw
-  PNG and logs remain ignored.
-- **Measured and source-file observation, Step 3:** video-5 reference measurements put the
-  30 mL surface at row 329 and the 80 mL surface at about row 177, approximately 3.04
-  rows/mL. An anonymous-session-layer camera override projected the exact-height synthetic
-  surfaces to those targets without editing the organizer twin. Final rendered RGB edges
-  were rows 329 and 179, both within the three-row camera checkpoint tolerance.
-- **Measured, Steps 4-5:** the renderer produced `empty`, `liquid`, `foam`, `blocked` and
-  `ignore` labels, with deterministic variation in level, colour/darkness, foam, sticker,
-  wet walls, lighting, camera and holder appearance. All 20 pilot frames passed the offline
-  audit and visual inspection. PathTracing at 32 subframes was retained.
-- **Measured, Step 6:** all 20 chunks completed: 3,000 train, 300 validation and 500 reserved
-  test frames at 640x480. Their disjoint seed ranges are `100000-102999`,
-  `1100000-1100299` and `2100000-2100499`. All 20 stored and rerun checks passed, source
-  inputs were unchanged, and aggregate integrity reported zero errors. Successful render
-  time was 25,618.8 seconds, or 533.98 frames/hour.
-- **Measured coverage:** the 3,800 frames include 1,897 foam, 2,274 sticker, 1,166 wet-wall,
-  1,863 edge-zone and 991 holder-hidden cases. Continuous sampling produced no exactly
-  0 mL frame. One 0.065117 mL training frame has no visible liquid pixels because the
-  sub-mL liquid is below the visible base edge with foam and sticker occlusion; its ignored
-  overlays were reviewed and it was retained as a legitimate occlusion.
-- **Limitation:** the holder projects to about 48.1-66.5 mL in the twin versus 53-69 mL in
-  the real reference. Sampling follows the twin zones and records this mismatch; organizer
-  geometry was not moved.
+- **Measured, Steps 2-5:** Isaac Sim 6.0.1 on an NVIDIA L40S produced 640x480 FillCam
+  renders with `empty`, `liquid`, `foam`, `blocked` and `ignore` labels. Deterministic
+  variation covered level, colour and darkness, foam, sticker, wet walls, lighting,
+  camera and holder appearance. All 20 pilot frames passed the offline audit and visual
+  inspection; PathTracing at 32 subframes was retained.
+- **Measured, Step 6:** all 20 chunks completed: 3,000 train, 300 validation and 500
+  reserved test frames. Their seed ranges were disjoint. All stored and rerun checks
+  passed, source inputs were unchanged, and aggregate integrity reported zero errors.
+- **Measured, Revision 2:** the original population was augmented with an exact-camera
+  v4 cohort of 480 train, 60 validation and 60 test renders. The combined contract was
+  therefore 3,480 train, 360 validation and 560 sealed test frames. The new cohort was
+  retained separately in every evaluation summary so its behavior could not be hidden by
+  the larger original cohort.
+- **Measured coverage:** the Step 6 frames included 1,897 foam, 2,274 sticker, 1,166
+  wet-wall, 1,863 edge-zone and 991 holder-hidden cases. One 0.065117 mL training frame
+  had no visible liquid pixels because the sub-mL liquid was below the visible base edge
+  with foam and sticker occlusion; its ignored overlays were reviewed and it was retained
+  as a legitimate occlusion.
+- **Limitation:** the holder projected to about 48.1-66.5 mL in the twin versus 53-69 mL
+  in the real reference. Sampling followed the twin zones and recorded this mismatch;
+  organizer geometry was not moved.
 
-## Synthetic-only training
+## Original model and transfer failures
 
-The original model is a four-level U-Net with 1,942,628 parameters. It uses the fixed
-112x416 vial crop `(256,48,368,464)`, four scored classes and ignore pixels. Training used
-only the 3,000 synthetic train frames; model selection used only the 300 synthetic validation
-frames. Class weights came from train masks only. Training augmentation used JPEG 4:2:0,
-blur and noise without changing mask geometry.
+The model is a four-level U-Net with 1,942,628 parameters and a fixed 112x416 vial crop
+`(256,48,368,464)`. It scores four classes and excludes ignore pixels. Training used only
+synthetic train frames; checkpoint selection used only synthetic validation frames.
 
-**Measured:** the full run completed 30 epochs in 303.49 seconds. Validation-only selection
-chose epoch 28 with loss 0.026975 and macro IoU 0.970575. Per-class IoU was 0.990214 empty,
-0.988638 liquid, 0.935690 foam and 0.967756 blocked. The selected ignored weight hashes to
+**Measured, original training:** 30 epochs selected epoch 28 with validation loss
+0.026975 and macro IoU 0.970575. Per-class IoU was 0.990214 empty, 0.988638 liquid,
+0.935690 foam and 0.967756 blocked. The selected ignored weight hashes to
 `86e89644...ddbeb`.
 
-**Limitation:** this is synthetic validation. It measures agreement with synthetic labels;
-it does not establish physical or real-world accuracy.
+**Measured, first calibration failure:** the original model and frozen center-strip rule
+reported all 98 permitted calibration frames at row 48. The equal medians failed the
+ordering guard, so no ruler was created. The real liquids were much darker than rendered
+validation liquid and approximately as dark as the holder, identifying a major appearance
+gap.
 
-## Synthetic surface validation
+**Measured development result, Revision 1:** one disclosed synthetic-only appearance
+revision selected epoch 27 at macro IoU 0.965030. A fixed darkened synthetic check improved,
+but the one permitted repeat calibration still failed: vial 1 had 23 visible and five
+hidden predictions, while all 70 vial-13 predictions were hidden. No ruler was created.
+Six already-permitted calibration frames were inspected as bounded qualitative diagnostics;
+they showed patchy real-domain segmentation, including holder, dark-liquid and large-label
+confusion.
 
-Before any real calibration frame was used, the original center-strip rule was frozen from
-all 300 synthetic validation renders. It searches columns `[298,316)`, requires at least
-five liquid pixels per row and uses blocked pixels to report hidden spans.
+## Revision 2 training and validation gates
 
-- **Measured visible cases:** 215 predictions; median absolute surface error 1 row
-  (0.329 mL), p95 2 rows (0.658 mL) and maximum 60 rows (19.737 mL).
-- **Measured hidden cases:** among 72 true-hidden frames, the rule reported hidden for 38
-  (52.78%). The true geometry row was inside the reported range for 21/72 (29.17%), or
-  21/38 (55.26%) conditional on a hidden prediction.
-- **Interpretation:** the median and p95 visible results were strong, but the maximum error
-  and hidden-case coverage already showed important synthetic failure modes.
+Revision 2 added the exact-camera v4 cohort, retained train-only liquid recolouring and
+darkening, and froze the full `holder_band_v2` surface rule with measurement rows
+`[83,427)`. It opened no sealed-test image and no real frame during training or validation.
 
-## Calibration failure 1: original model and rule
+**Measured training:** all 3,480 train and 360 validation samples passed preflight. Thirty
+epochs completed in 477.59 seconds, selecting epoch 29 at validation loss 0.046605 and
+macro IoU 0.948626. The selected ignored weight is `best-epoch-029.pt`, SHA-256
+`1949bdea...b094`.
 
-Only two settled video-5 calibration windows were opened: vial 1 at 30 mL, frames 816-843
-(28 frames), and vial 13 at 80 mL, frames 19700-19769 (70 frames). The inputs are lossless
-640x480 PNGs bound by index SHA-256 `73181d39...f9b2`.
+**Measured validation:** both frozen validation gates failed.
 
-**Measured failure:** all 98 frames were reported visible at row 48, the first row of the
-crop. The affine-ruler guard rejected the equal medians because the 30 mL row must lie below
-the 80 mL row. No ruler was created. Read-only diagnosis found all 18 center-strip pixels at
-row 48 classified as liquid in every frame. At the expected row 177, vial 13 had a median
-of zero liquid and 18 blocked pixels.
+| Cohort | Frames | Visible predictions | Visible absolute error, rows median / p95 / max | Hidden truth-in-range | Non-hidden called hidden |
+|---|---:|---:|---:|---:|---:|
+| Original Step 6 validation | 300 | 132 | 0 / 1.45 / 34 | 69/72 (95.83%) | 98 |
+| New exact-v4 validation | 60 | 26 | 2.5 / 60 / 71 | 17/18 (94.44%) | 17 |
 
-**Interpretation:** extraction, dimensions, preprocessing, checkpoint and input hashes
-matched. The frozen synthetic rule searched above the vial interior and the CNN did not
-transfer to the much darker real liquids. This was a genuine model/rule domain-transfer
-failure, not a transport or retry failure.
+- The overall visible p95 was 17.05 rows against a maximum of 3 rows: **failed**.
+- Hidden success required each cohort to reach 95%. The original cohort passed, while the
+  exact-v4 cohort reached 94.44%: **failed**, though the user accepted that result against
+  their practical 90% bar.
+- All 115 false-hidden calls and the reported 92-row (30.263 mL) range width were retained.
+  A hidden success only means the truth lies inside that broad range; it flags possible
+  large errors rather than providing a precise reading.
+- Eight of 26 visible exact-v4 predictions missed by more than six rows; all eight had foam
+  or a sticker. The single crop-edge truth fallback was recorded.
 
-**Measured (Claude review, ~03:35 entry):** in the vial-centre columns, the real liquid mean
-HSV value-channel brightness (`V`) was 0.155 for vial 1 and 0.088 for vial 13, while the real
-holder plate was 0.184. Rendered validation liquid, measured under its liquid mask, had a
-5th-percentile `V` of 0.26 and a median of 0.56; no rendered validation liquid was below
-0.15. Both real-liquid means were far below the rendered 5th percentile and were as dark as
-the holder or darker. Vial 13 was below every rendered value, while vial 1 lay near the
-reported lower bound. This is the clearest measured appearance gap behind the transfer
-failure.
+**Decision disclosure:** despite both validation-gate failures, the user explicitly directed
+the one frozen calibration run to proceed. No threshold, rule setting or model weight was
+changed in response to validation.
 
-## One disclosed revision
+## Revision 2 calibration failure
 
-Exactly one revision was authorized after that calibration failure. It was informed only by
-the two calibration vials and is disclosed here.
+Only calibration vial 1 (30 mL, 28 frames) and vial 13 (80 mL, 70 frames) were opened.
+All 98 frames were scored once as development use 3; access counters recorded zero train,
+validation, test and real-check frames during this run. An earlier provenance preflight
+failed before opening an output root or scoring a frame, so it did not count as a
+calibration use.
 
-- The rule's measurement rows were restricted to `[83,427)`, derived from synthetic
-  validation vial outlines; columns and pixel thresholds remained frozen.
-- Synthetic train-only augmentation recoloured liquid-mask pixels in about half of frames,
-  with value sampled from `[0.03,0.35]`, while retaining local texture. Global brightness,
-  contrast, gamma, saturation and white-balance jitter were added; JPEG 4:2:0, blur and
-  noise remained.
-- Training retained the Step 7 data/settings and added cosine learning-rate decay. No real
-  frame was used for training or selection.
+| Vial | Visible / hidden / abstain | Predicted row median (range) | Frozen target | Absolute miss |
+|---|---:|---:|---:|---:|
+| 1, 30 mL | 28 / 0 / 0 | 224 (224-224) | 329 | 105 rows |
+| 13, 80 mL | 70 / 0 / 0 | 169 (168-174) | 177 | 8 rows |
 
-**Measured revised training:** 30 epochs selected epoch 27 on validation at macro IoU
-0.965030. The ignored selected weight hashes to `51f4e3cf...f0197`.
+**Measured failure:** the ordering was correct (`224 > 169` in image coordinates), but
+both medians were outside the frozen +/-4-row tolerance. No system-fitted ruler was created.
 
-**Measured synthetic comparison:** on normal validation, original/revised macro IoU was
-0.970578/0.965033 and visible-surface p95 was 2.0/2.55 rows, so the revised model passed the
-required three-row ceiling. On a fixed-seed darkened validation copy, original/revised macro
-IoU was 0.964944/0.978789 and p95 was 14.8/2.0 rows.
+**Decision disclosure:** the user explicitly directed Steps 9 and 10 to run without a fix,
+using the unchanged selected weight and rule. The Step 10 conversion instead uses the
+hand-measured Step 3 camera targets: 30 mL at row 329 and 80 mL at row 177, or exactly
+3.04 rows/mL. This ruler comes only from calibration vials 1 and 13 and was not fitted to
+the failed calibration predictions.
 
-**Limitation:** the fixed synthetic darkening test showed the intended augmentation effect;
-it did not demonstrate transfer to real video.
+## Step 9: held-out synthetic test
 
-## Calibration failure 2 and bounded qualitative diagnostics
+The evaluator and ruler were committed before production discovery. All 560 sealed test
+renders were scored once in 8.41 seconds: 500 from the original Step 6 cohort and 60 from
+the new exact-v4 cohort. No train, validation, calibration or real-check image was loaded.
 
-Exactly one repeat calibration used Revision 1 on the same 98 frames.
+**Measured overall result:** 239 frames produced visible readings. Absolute row-derived
+error was median 0 mL, p95 2.204 mL and maximum 33.882 mL. Of 142 ground-truth-hidden
+frames, 134 were called hidden with truth inside the range (94.37%). There were 183 false
+hidden calls among 418 non-hidden frames (43.78%), four abstentions and three truth-crop
+fallbacks. Synthetic segmentation macro IoU was 0.953417.
 
-- **Measured, vial 1:** 23 visible and five hidden predictions. Twenty visible predictions
-  were at row 99 and three at row 224, giving median row 99 versus target row 329.
-- **Measured, vial 13:** zero visible and 70 hidden predictions. Without three visible rows,
-  calibration stopped before fitting. No ruler was created and no second revision or repeat
-  run was made.
+| Cohort | Visible n | Visible error, mL median / p95 / max | Hidden success | False hidden | Abstain / fallback |
+|---|---:|---:|---:|---:|---:|
+| Original Step 6 test (500) | 211 | 0 / 0.987 / 25.987 | 123/128 (96.09%) | 163 | 3 / 2 |
+| New exact-v4 test (60) | 28 | 0.329 / 12.862 / 33.882 | 11/14 (78.57%) | 20 | 1 / 1 |
+| Combined (560) | 239 | 0 / 2.204 / 33.882 | 134/142 (94.37%) | 183 | 4 / 3 |
 
-The stopped-review diagnostic allowance opened exactly six already-permitted calibration
-frames: vial 1 frames 816, 830 and 843, and vial 13 frames 19700, 19735 and 19769. For each
-frame, both models produced a predicted-mask-on-RGB overlay and a center-strip row profile;
-all 44 payloads in the preserved diagnostic evidence passed host and local checksum checks.
+Against the frozen targets:
 
-**Qualitative diagnostic:** Revision 1 correctly identifies empty glass near the top of both
-vials, the holder front as blocked, liquid near the bottom of vial 1, and some liquid near
-the top of vial 13 inside the holder hole. It also labels much of vial 13's dark liquid
-column as blocked, labels vial 1's large white BRADY sticker as foam, and creates stray
-liquid patches high in vial 1. Predictions outside the vial are not interpreted because
-those pixels are `ignore` and were never trained.
+- typical visible error was 0 mL against a maximum of 1 mL: **passed**;
+- visible p95 was 2.204 mL against a maximum of 2 mL: **failed**; and
+- hidden success was 94.37% against a minimum of 95%: **failed**, while exceeding the
+  user's separate practical bar of 90%.
 
-**Interpretation:** these bounded overlays correct an earlier, more optimistic rule-only
-reading. The failure is mainly a CNN real-domain transfer problem, not only a surface-rule
-problem. A rule-only change might fit the two calibration vials but would not repair the
-patchy segmentation itself.
+Every predicted hidden interval was 92 rows, or 30.263 mL. Thus the high containment rate
+shows that the rule catches many large errors behind the holder; it does not show precise
+hidden-level measurement. The sharp cohort split also shows that aggregate behavior was
+dominated by the larger original cohort.
+
+## Step 10: measured real check
+
+The real-check evaluator was committed before any production frame access. It used the
+same frozen weight and rule plus the hand-measured two-point ruler disclosed above. The
+exact 27 eligible vials other than calibration vial 13 were evaluated once. Exactly 1,470
+approved settled-window frames were decoded and scored; 1,464 frame predictions contributed
+to the vial medians. No train, validation, test or calibration frame was opened during the
+run. There were no abstentions and no no-clean-frame outcomes.
+
+**Measured overall result:** 19 vials produced visible readings and eight were called
+hidden.
+
+| Result | Count or value |
+|---|---:|
+| Visible absolute error median / p95 / max | 2.434 / 22.961 / 23.553 mL |
+| Visible signed-error median | +1.447 mL |
+| Visible within 1 / 2 / 5 mL | 4 / 7 / 11 of 19 |
+| Hidden recipe inside reported range | 5 of 8 |
+| Hidden range | 42.171-72.434 mL (30.263 mL wide) |
+
+**Measured by recipe zone:**
+
+Here, zone is the source/reference grouping from the recipe and camera geometry, not a
+model-detected edge flag; the evaluator recorded zero edge-flagged frames.
+
+| Zone | Vials | Visible / hidden | Visible error median / p95 / max, mL | Within 1 / 2 / 5 mL | Hidden containment |
+|---|---:|---:|---:|---:|---:|
+| Visible | 10 | 7 / 3 | 2.237 / 23.355 / 23.553 | 2 / 3 / 4 | 0/3 |
+| Edge | 15 | 12 / 3 | 2.599 / 14.934 / 14.934 | 2 / 4 / 7 | 3/3 |
+| Hidden | 2 | 0 / 2 | n/a | n/a | 2/2 |
+
+**Measured by recipe transition:**
+
+| Group | Vials | Visible / hidden | Visible error median / p95 / max, mL | Within 1 / 2 / 5 mL | Hidden containment |
+|---|---:|---:|---:|---:|---:|
+| Repeat | 20 | 15 / 5 | 2.434 / 17.322 / 22.895 | 3 / 6 / 9 | 3/5 |
+| Transition | 7 | 4 / 3 | 8.684 / 22.260 / 23.553 | 1 / 1 / 2 | 2/3 |
+
+Transitions were materially worse than repeats at the median. The four worst visible
+readings were all high: vial 4, +23.553 mL (transition, visible zone); vial 5, +22.895 mL
+(repeat, visible zone); vial 8, +14.934 mL (repeat, edge); and vial 25, +14.934 mL
+(transition, edge).
+
+**Interpretation:** the median real-vial point error is useful evidence that the frozen
+system sometimes transfers, but the tail errors are too large to support a general physical
+accuracy claim. Hidden containment is also intentionally forgiving: every hidden result
+uses the same 30.263 mL interval, and all three visible-zone vials incorrectly called hidden
+fell outside it. Hidden success therefore flags only large errors.
+
+## Bias and exposure disclosures
+
+- **Source-file observation:** the Oct 31 camera-target notes in the plan referred to stills
+  from real-check vials 8, 12, 14, 17 and 18 while matching framing. The numerical ruler
+  itself uses only calibration vials 1 and 13.
+- **Source-file observation:** at about 18:50 CST, after the Step 10 evaluator was frozen at
+  about 18:37 and while its run was in progress, Claude viewed WP5 masks and frames for
+  real-check vials 6, 18 and 28 on a separate GB10 system for an unrelated WP5 check. That
+  exposure could not change the already-frozen Step 10 model, rule, ruler or evaluator, but
+  it is disclosed because those vials are in the measured real-check population. The
+  evaluation was therefore not pristine-blind to every reviewer even though its frozen
+  result could not be changed.
+- **Measured and decision disclosure:** validation gates failed; the user directed
+  calibration to run anyway. Calibration then failed; the user directed the frozen Step 9
+  and Step 10 evaluations to run anyway. No reported Step 9 or Step 10 metric was used for
+  tuning or rerun.
 
 ## What would likely help
 
-**Proposal, not a measured result or authorization:** the failure evidence suggests these
-future directions, but none has been implemented or tested here.
+**Proposal, not a measured result or authorization:** future work could render physically
+dark translucent liquids, include realistic large labels, reduce false-hidden calls, and
+separate transition behavior from settled repeats. Any real-frame training or hand-labelled
+real dataset would require a policy change, a new disjoint evaluation population and explicit
+approval; the current project did not do this.
 
-- Render physically dark, translucent liquids so path-traced training images reproduce the
-  real appearance gap, rather than relying only on 2D recolouring.
-- Include realistic large labels such as the white BRADY sticker so label appearance and
-  occlusion are represented in synthetic training.
-- Explore unsupervised style adaptation that uses unlabelled real frames for appearance only,
-  while preserving the synthetic labels and an independent evaluation split.
-- Consider a small hand-labelled real training set only after a policy change and explicit
-  approval from both the user and Liam. The current project rules do not permit training on
-  real frames.
+## Conclusion
 
-## Conclusion and limits
+The project produced a reproducible synthetic pipeline, a frozen Revision 2 model, a
+sealed synthetic test and a measured real-vial check. The honest conclusion is not a
+single pass or fail:
 
-The synthetic pipeline produced a large, internally checked dataset and a model with strong
-synthetic validation scores. That success did not transfer to the two permitted real
-calibration vials. The original model/rule failed, and one disclosed synthetic-only revision
-also failed. Therefore:
+- synthetic typical visible accuracy passed, while synthetic p95 and hidden targets failed;
+- the newer exact-v4 cohort was substantially harder than the original cohort;
+- the system calibration failed and supplied no ruler;
+- the hand-ruler real check had a 2.43 mL median visible error but approximately 23 mL p95
+  and maximum errors; and
+- hidden outputs were broad 30.3 mL flags, not precise estimates.
 
-- no row-to-mL ruler is frozen;
-- no physical fill-level accuracy is established;
-- the 500 reserved test renders are unscored;
-- the 27 real-check vials are unopened and unscored;
-- Step 9 and Step 10 results are unchecked; and
-- the project remains STOPped pending the user's choice. Do not start Step 9.
-
-This draft can support an honest negative result if the project ends here, or it can be
-extended only after a newer explicit decision authorizes the next path.
+These results support further research but not a production-ready physical accuracy claim.
