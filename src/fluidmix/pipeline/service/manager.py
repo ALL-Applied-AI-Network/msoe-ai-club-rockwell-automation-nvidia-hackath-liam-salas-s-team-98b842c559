@@ -344,8 +344,11 @@ class SessionManager:
                     and not bool(getattr(adapter, "session_complete", False))
                 ):
                     reason = getattr(adapter, "eof_abstention_reason", None)
+                    reason = reason or "tracker_incomplete_or_disagreed"
+                    if rolling:
+                        reason = self._rolling_reason_code(reason)
                     self._emit_abstention(
-                        session, reason or "tracker_incomplete_or_disagreed",
+                        session, reason,
                         rolling_cohort_ordinal=(cohort_ordinal if rolling else None),
                     )
                 desired = "stopped" if session.stop.is_set() else "completed"
@@ -380,6 +383,10 @@ class SessionManager:
     @classmethod
     def _rolling_failure_code(cls, error: Exception) -> str | None:
         reason = cls._pipeline_failure_code(error)
+        return None if reason is None else cls._rolling_reason_code(reason)
+
+    @staticmethod
+    def _rolling_reason_code(reason: str) -> str:
         if reason in {"tracker_stream_state_count_disagrees",
                       "tracker_stream_order_disagrees"}:
             return "unsupported_recipe_profile"

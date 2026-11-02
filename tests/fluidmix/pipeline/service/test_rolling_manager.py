@@ -224,3 +224,32 @@ def test_repeated_rolling_abstentions_have_cohort_specific_identity(
     assert [row["vial_id"] for row in retained] == [
         "cohort-1:unavailable", "cohort-2:unavailable",
     ]
+
+
+@pytest.mark.parametrize(("eof_reason", "expected_reason"), [
+    ("tracker_stream_state_count_disagrees", "unsupported_recipe_profile"),
+    ("tracker_stream_order_disagrees", "unsupported_recipe_profile"),
+    ("tracker_stable_tail_missing", "tracker_stable_tail_missing"),
+])
+def test_rolling_eof_uses_the_same_failure_reason_policy(
+    eof_reason, expected_reason, tmp_path, monkeypatch,
+):
+    class IncompleteAdapter:
+        requires_complete = True
+        session_complete = False
+        eof_abstention_reason = eof_reason
+
+        def process_frame(self, _frame, **_metadata):
+            return ()
+
+    manager, session_id, state = _run(
+        tmp_path, monkeypatch, Factory(IncompleteAdapter), Frames([0, 0]),
+    )
+
+    assert state["state"] == "stopped"
+    assert manager.decisions(session_id) == [{
+        "type": "abstention", "vial_id": "cohort-1:unavailable",
+        "disposition": "insufficient_evidence",
+        "limit_codes": [expected_reason], "evidence_citations": [],
+        "cohort_ordinal": 1,
+    }]
