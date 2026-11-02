@@ -26,7 +26,7 @@ def test_vlm_freeze_is_pinned_to_onion_decision_source(monkeypatch, tmp_path):
     onion.write_bytes(b"onion decision source\n")
     freeze = tmp_path / "freeze.json"
     freeze.write_text(json.dumps({
-        "schema_version": "wp7-vlm-development-freeze-v12",
+        "schema_version": "wp7-vlm-development-freeze-v13",
         "models": [
             {"repository": repository, "revision": revision}
             for repository, revision in module.MODEL_REVISIONS.items()

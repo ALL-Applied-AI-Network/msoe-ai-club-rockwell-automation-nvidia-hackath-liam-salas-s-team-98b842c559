@@ -72,23 +72,18 @@ class ThreeVialAdapter:
     def run_vlm(self, bundle):
         return (
             {"source_id": "vlm-a", "disposition": "discard", "discard_score": 0.8,
-             "disposition_confidence": 0.8, "guard_status": "admitted",
+             "confidence": 0.8, "guard_status": "admitted",
              "repository": "org/model-a", "revision": "rev-a",
              "runtime_telemetry": {"status": "completed", "elapsed_seconds": 1.25},
              "explanation": "Target differs from both references.",
-             "model_explanation": "Target differs from both references.",
-             "explanation_status": "model_written", "explanation_guard_reasons": [],
              "evidence_citations": ["EV-1", "EV-2"], "image_citations": ["IMG-1"]},
             {"source_id": "vlm-b", "disposition": "keep", "discard_score": 0.2,
-             "disposition_confidence": 0.8, "guard_status": "admitted",
+             "confidence": 0.8, "guard_status": "admitted",
              "repository": "org/model-b", "revision": "rev-b",
-             "explanation": "Deterministic fallback: structured keep disposition.",
-             "model_explanation": "Residue caused the target to agree.",
-             "explanation_status": "deterministic_fallback",
-             "explanation_guard_reasons": ["cause_claim"],
+             "explanation": "Target agrees with both references.",
              "evidence_citations": ["EV-1", "EV-3"], "image_citations": ["IMG-2"]},
             {"source_id": "vlm-c", "disposition": "insufficient_evidence",
-             "discard_score": None, "disposition_confidence": None,
+             "discard_score": None, "confidence": None,
              "guard_status": "excluded", "guard_reasons": ["parse_failed"],
              "repository": "org/model-c", "revision": "rev-c",
              "runtime_telemetry": {
@@ -155,9 +150,9 @@ def test_session_emits_causal_events_and_equal_weight_final_decision(tmp_path):
     assert {row["producer"]["model_id"] for row in explanations} >= {
         "org/model-a", "org/model-b", "deterministic-template",
     }
-    fallback = next(row for row in explanations if row["explanation_id"].endswith("vlm-b"))
-    assert fallback["producer"]["source"] == "deterministic_fallback"
-    assert fallback["limits"] == ["cause_claim"]
+    model_b = next(row for row in explanations if row["explanation_id"].endswith("vlm-b"))
+    assert model_b["producer"]["source"] == "inferred"
+    assert model_b["limits"] == []
 
 
 def test_deterministic_decision_is_causal_and_rate_health_is_measured(tmp_path):

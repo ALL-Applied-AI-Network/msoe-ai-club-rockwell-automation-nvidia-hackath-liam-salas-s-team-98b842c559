@@ -186,43 +186,27 @@ def _tracker_receipts(cohort):
     return receipts
 
 
-def _result(disposition="keep", score=0.8):
-    comparisons = [
-        {
-            "stage_id": f"stage-{ordinal}",
-            "phase_and_fill_match": "matched",
-            "vial1_vs_vial2": "keep_range",
-            "vial1_vs_vial3": "keep_range",
-            "delta_e76_vial2": 0.0,
-            "delta_e76_vial3": 0.0,
-            "deterministic_stage_disposition": "keep",
-            "stream_tank_consistency": "consistent",
-            "previous_recipe_direction": "not_assessable",
-            "reliability": "clear_consistent",
-            "bundle_ids": [f"EV-C1-V1-S{ordinal}"],
-        }
-        for ordinal in (1, 2)
-    ]
+def _v2_result(disposition="keep", confidence=0.8):
     return {
-        "observations": [
+        "stages": [
             {
-                "stage_id": row["stage_id"],
-                "visual_assessment": row["reliability"],
+                "stage_id": f"stage-{ordinal}",
+                "what_i_see": "Vial 1 and both references look alike from early to end.",
+                "physical_reasoning": "The settled colours are consistent with similar mixing.",
+                "vial1_vs_references": "same",
+                "image_quality": "good",
+                "cited_image_ids": [],
             }
-            for row in comparisons
+            for ordinal in (1, 2)
         ],
-        "per_stage_comparison": comparisons,
         "disposition": disposition,
-        "disposition_confidence": score,
-        "explanation": (
-            "The supplied evidence does not support a disposition. "
-            "The structured result is insufficient evidence."
-            if disposition == "insufficient_evidence"
-            else f"The cited stage evidence supports the structured {disposition} disposition. "
-            "The comparison is limited to the supplied bundle."
-        ),
-        "evidence_citations": ["EV-C1-V1-S1", "EV-C1-V2-S1"],
-        "image_citations": ["IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end"],
+        "confidence": confidence,
+        "agrees_with_deterministic": "no",
+        "why_agree_or_disagree": "The images support my judgment independently of the rule label.",
+        "physics_used": ["mixing", "path length"],
+        "explanation": f"The image comparison supports {disposition}.",
+        "evidence_citations": [],
+        "image_citations": [],
     }
 
 
@@ -231,6 +215,190 @@ def _attempt(repository, raw):
 
     revision = next(row["revision"] for row in MODELS if row["repository"] == repository)
     return {"repository": repository, "revision": revision, "raw_response": raw}
+
+
+def test_v2_guard_admits_complete_independent_judgment_with_optional_citations(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+
+    guarded = guard_model_response(
+        _v2_result("discard", 0.75), built.prompt_payload
+    )
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["vote"] == pytest.approx(0.75)
+    assert guarded["agrees_with_deterministic"] == "no"
+    assert guarded["evidence_citations"] == []
+    assert guarded["image_citations"] == []
+
+
+@pytest.mark.parametrize(
+    ("field", "text", "reason"),
+    [
+        ("physical_reasoning", "The colour was caused by stratification.", "asserted_cause_claim"),
+        (
+            "physical_reasoning",
+            "The pattern could reflect glare, but the colour was caused by stratification.",
+            "asserted_cause_claim",
+        ),
+        (
+            "physical_reasoning",
+            "Stratification explains the difference.",
+            "asserted_cause_claim",
+        ),
+        ("physical_reasoning", "The difference is carryover.", "asserted_cause_claim"),
+        ("physical_reasoning", "The pattern stems from layering.", "asserted_cause_claim"),
+        ("physical_reasoning", "The simulator residue was visible.", "hidden_simulator_state_claim"),
+        (
+            "physical_reasoning",
+            "The simulation output confirms layering.",
+            "hidden_simulator_state_claim",
+        ),
+        ("physical_reasoning", "Residual volume was 2 mL.", "residue_amount_claim"),
+        ("physical_reasoning", "The dead volume was 2 mL.", "residue_amount_claim"),
+        ("explanation", "Please discard this vial.", "operator_action_claim"),
+        ("explanation", "Vial 1 should be discarded.", "operator_action_claim"),
+        ("explanation", "Vial 1 should be discarded.", "disposition_contradiction"),
+        ("explanation", "Overall, discard.", "disposition_contradiction"),
+        ("explanation", "Vial 1 is a discard.", "disposition_contradiction"),
+        ("explanation", "The image comparison supports discard.", "disposition_contradiction"),
+        ("explanation", "The DeltaE76 value is 99.", "numeric_claim_contradiction"),
+        ("explanation", "The ΔE76 value is 99.", "numeric_claim_contradiction"),
+        (
+            "explanation",
+            "The ΔE76 is approximately 99.",
+            "numeric_claim_contradiction",
+        ),
+        ("explanation", "The confidence value is 0.1.", "numeric_claim_contradiction"),
+    ],
+)
+def test_v2_guard_excludes_factual_errors_without_fallback(
+    tmp_path, field, text, reason,
+):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    response = _v2_result("keep", 0.8)
+    if field in {"what_i_see", "physical_reasoning"}:
+        response["stages"][0][field] = text
+    else:
+        response[field] = text
+
+    guarded = guard_model_response(response, built.prompt_payload)
+
+    assert guarded["guard_status"] == "excluded"
+    assert guarded["vote"] is None
+    assert reason in guarded["guard_reasons"]
+    assert guarded["explanation"] == response["explanation"]
+    assert "explanation_status" not in guarded
+
+
+def test_v2_guard_allows_qualified_physics_and_unrelated_numbers(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    response = _v2_result("keep", 0.8)
+    response["stages"][0]["physical_reasoning"] = (
+        "The pattern could be due to carryover. "
+        "A Reynolds number near 2000 would be a separate physical consideration."
+    )
+
+    guarded = guard_model_response(response, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+    assert guarded["vote"] == pytest.approx(0.2)
+
+
+@pytest.mark.parametrize(
+    "reasoning",
+    [
+        "Stratification could explain the difference.",
+        "The difference may be carryover.",
+        "The pattern might stem from layering.",
+        "The pattern may plausibly stem from layering.",
+        "Higher dye concentration could increase absorbance.",
+        "Beer-Lambert reasoning might relate concentration to absorbance.",
+        "Dead volume could matter; Reynolds number 2000 is another consideration.",
+    ],
+)
+def test_v2_guard_allows_qualified_cause_wording(tmp_path, reasoning):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    response = _v2_result("keep", 0.8)
+    response["stages"][0]["physical_reasoning"] = reasoning
+
+    guarded = guard_model_response(response, built.prompt_payload)
+
+    assert guarded["guard_status"] == "admitted"
+
+
+def test_v2_guard_parses_scientific_notation_in_delta_e_claims(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    for evidence in built.prompt_payload["deterministic_evidence"]:
+        if evidence.get("vial_position") == 1 and evidence.get("stage_id") == "stage-1":
+            evidence["delta_e76_vial2"] = 1.0
+            evidence["delta_e76_vial3"] = 1.0
+    response = _v2_result("keep", 0.8)
+    response["stages"][0]["physical_reasoning"] = "The DeltaE76 is 1e2."
+
+    guarded = guard_model_response(response, built.prompt_payload)
+
+    assert guarded["guard_status"] == "excluded"
+    assert "numeric_claim_contradiction" in guarded["guard_reasons"]
+
+
+def test_v2_guard_requires_exact_stage_coverage_and_text_limits(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    missing = _v2_result()
+    missing["stages"].pop()
+    assert "stage_coverage_invalid" in guard_model_response(
+        missing, built.prompt_payload
+    )["guard_reasons"]
+    overlong = _v2_result()
+    overlong["stages"][0]["what_i_see"] = "x" * 601
+    assert "what_i_see_invalid" in guard_model_response(
+        overlong, built.prompt_payload
+    )["guard_reasons"]
+    wrong_stage_image = _v2_result()
+    wrong_stage_image["stages"][0]["cited_image_ids"] = [
+        "IMG-C1-V1-S2-end"
+    ]
+    assert "stage_image_citations_invalid" in guard_model_response(
+        wrong_stage_image, built.prompt_payload
+    )["guard_reasons"]
+
+
+@pytest.mark.parametrize(
+    ("field", "reason"),
+    [
+        ("vial1_vs_references", "vial1_vs_references_invalid"),
+        ("image_quality", "image_quality_invalid"),
+    ],
+)
+def test_v2_guard_excludes_unhashable_stage_enum_values(tmp_path, field, reason):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    response = _v2_result()
+    response["stages"][0][field] = []
+
+    guarded = guard_model_response(response, built.prompt_payload)
+
+    assert guarded["guard_status"] == "excluded"
+    assert reason in guarded["guard_reasons"]
 
 
 def _decoder_builder(_runtime, *, repository, response_schema):
@@ -486,7 +654,7 @@ def test_optional_camera_metadata_is_explicit_but_production_requires_core_field
 
 
 def test_parser_accepts_strict_and_bounded_fenced_json_but_rejects_malformed():
-    expected = _result()
+    expected = _v2_result()
     assert parse_model_response(json.dumps(expected)) == expected
     assert parse_model_response(f"```json\n{json.dumps(expected)}\n```") == expected
     for raw in ("not json", "```json\n{}", "prefix {} suffix", "````json\n{}\n````"):
@@ -494,698 +662,12 @@ def test_parser_accepts_strict_and_bounded_fenced_json_but_rejects_malformed():
             parse_model_response(raw)
 
 
-def test_guard_validates_keep_discard_insufficient_score_and_exact_citations(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
-    for disposition, score, vote in (
-        ("keep", 0.9, 0.1), ("discard", 0.8, 0.8),
-        ("insufficient_evidence", 0.5, None),
-    ):
-        raw = _result(disposition, score)
-        guarded = guard_model_response(raw, built.prompt_payload)
-        if vote is None:
-            assert guarded["vote"] is None
-            assert guarded["discard_score"] is None
-        else:
-            assert guarded["vote"] == pytest.approx(vote)
-            assert guarded["discard_score"] == pytest.approx(vote)
-    invalid = _result()
-    invalid["image_citations"] = ["IMG-NOT-DELIVERED"]
-    assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
-    invalid = _result()
-    invalid["evidence_citations"] = []
-    guarded = guard_model_response(invalid, built.prompt_payload)
-    assert "evidence_citations_invalid" in guarded["guard_reasons"]
-    invalid = _result()
-    invalid["image_citations"] = []
-    guarded = guard_model_response(invalid, built.prompt_payload)
-    assert "image_citations_invalid" in guarded["guard_reasons"]
-    free_text = _result()
-    free_text["explanation"] = (
-        "Both stage comparisons remain in the keep range. "
-        "The structured disposition is keep under the cited bundle evidence."
-    )
-    guarded = guard_model_response(free_text, built.prompt_payload)
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["explanation_status"] == "model_written"
-    assert guarded["explanation"] == free_text["explanation"]
-    invalid = _result(score=float("inf"))
-    assert guard_model_response(invalid, built.prompt_payload)["vote"] is None
-    invalid = _result()
-    invalid["per_stage_comparison"] = []
-    guarded = guard_model_response(invalid, built.prompt_payload)
-    assert "per_stage_comparison_coverage_invalid" in guarded["guard_reasons"]
-    invalid = _result()
-    invalid["per_stage_comparison"][0]["bundle_ids"] = ["EV-C1-V1-S2"]
-    guarded = guard_model_response(invalid, built.prompt_payload)
-    assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
-    invalid = _result()
-    invalid["observations"][0]["bundle_ids"] = ["EV-C1-V1-S1"]
-    guarded = guard_model_response(invalid, built.prompt_payload)
-    assert "observations_invalid" in guarded["guard_reasons"]
-
-
-def test_guard_binds_tracker_consistency_and_fails_closed_without_previous_color_reference(
-    tmp_path,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-
-    wrong_consistency = _result()
-    wrong_consistency["per_stage_comparison"][0][
-        "stream_tank_consistency"
-    ] = "inconsistent"
-    guarded = guard_model_response(wrong_consistency, built.prompt_payload)
-    assert "stream_tank_consistency_mismatch" in guarded["guard_reasons"]
-
-    unsupported_direction = _result()
-    unsupported_direction["per_stage_comparison"][0][
-        "previous_recipe_direction"
-    ] = "toward_previous_recipe"
-    guarded = guard_model_response(unsupported_direction, built.prompt_payload)
-    assert "previous_recipe_direction_unsupported" in guarded["guard_reasons"]
-
-    stage_local_images = _result()
-    stage_local_images["per_stage_comparison"][0]["bundle_ids"] = [
-        "IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end",
-    ]
-    guarded = guard_model_response(stage_local_images, built.prompt_payload)
-    assert guarded["guard_status"] == "admitted"
-
-    later_stage_image = _result()
-    later_stage_image["per_stage_comparison"][0]["bundle_ids"] = [
-        "IMG-C1-V1-S2-end"
-    ]
-    guarded = guard_model_response(later_stage_image, built.prompt_payload)
-    assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
-
-    earlier_stage_image = _result()
-    earlier_stage_image["per_stage_comparison"][1]["bundle_ids"] = [
-        "IMG-C1-V1-S1-end"
-    ]
-    guarded = guard_model_response(earlier_stage_image, built.prompt_payload)
-    assert "per_stage_comparison_bundle_ids_invalid" in guarded["guard_reasons"]
-
-    assessment_mismatch = _result()
-    assessment_mismatch["observations"][0]["visual_assessment"] = "weak"
-    guarded = guard_model_response(assessment_mismatch, built.prompt_payload)
-    assert "observation_comparison_binding_mismatch" in guarded["guard_reasons"]
-
-    invalid_phase = _result()
-    invalid_phase["per_stage_comparison"][0]["phase_and_fill_match"] = "looks matched"
-    guarded = guard_model_response(invalid_phase, built.prompt_payload)
-    assert "phase_and_fill_match_invalid" in guarded["guard_reasons"]
-
-    missing_support = copy.deepcopy(built.prompt_payload)
-    del missing_support["previous_recipe_direction_support"]
-    guarded = guard_model_response(_result(), missing_support)
-    assert "previous_recipe_direction_support_invalid" in guarded["guard_reasons"]
-
-    assert guard_model_response(_result(), built.prompt_payload)[
-        "guard_status"
-    ] == "admitted"
-
-
-def test_guard_caps_any_non_clear_stage_at_point_8(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
-    clear = guard_model_response(_result("discard", 0.9), built.prompt_payload)
-    assert clear["guard_status"] == "admitted"
-    for reliability in ("weak", "low", "conflicting"):
-        at_cap = _result("discard", 0.8)
-        at_cap["per_stage_comparison"][0]["reliability"] = reliability
-        at_cap["observations"][0]["visual_assessment"] = reliability
-        assert guard_model_response(at_cap, built.prompt_payload)["guard_status"] == "admitted"
-        above_cap = _result("discard", 0.81)
-        above_cap["per_stage_comparison"][0]["reliability"] = reliability
-        above_cap["observations"][0]["visual_assessment"] = reliability
-        guarded = guard_model_response(above_cap, built.prompt_payload)
-        assert guarded["guard_status"] == "excluded"
-        assert "non_clear_stage_confidence_above_0_8" in guarded["guard_reasons"]
-
-
-def test_guard_rejects_attempt08_threshold_contradiction_and_admits_exact_outcomes(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    target_stage = cohort["vials"][0]["stages"][1]["measurement"]
-    cohort["vials"][1]["stages"][1]["measurement"]["median_lab"] = [59.53, 2.0, 3.0]
-    cohort["vials"][2]["stages"][1]["measurement"]["median_lab"] = [55.36, 2.0, 3.0]
-    distance_vial2 = math.dist([50.0, 2.0, 3.0], [59.53, 2.0, 3.0])
-    distance_vial3 = math.dist([50.0, 2.0, 3.0], [55.36, 2.0, 3.0])
-    target_stage.update({
-        "delta_e76_vial2": distance_vial2,
-        "delta_e76_vial3": distance_vial3,
-        "deterministic_disposition": "discard",
-    })
-    receipt = cohort["deterministic_decision_receipt"]
-    receipt["disposition"] = "discard"
-    receipt["stages"][1].update({
-        "delta_e76_vial2": distance_vial2,
-        "delta_e76_vial3": distance_vial3,
-        "disposition": "discard",
-    })
-    receipt["receipt_sha256"] = hashlib.sha256(json.dumps(
-        {key: value for key, value in receipt.items() if key != "receipt_sha256"},
-        sort_keys=True, separators=(",", ":"),
-    ).encode()).hexdigest()
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-
-    stage2_evidence = next(
-        row for row in built.prompt_payload["deterministic_evidence"]
-        if row["vial_position"] == 1 and row["stage_id"] == "stage-2"
-    )
-    assert stage2_evidence["delta_e76_vial2"] == pytest.approx(9.53)
-    assert stage2_evidence["delta_e76_vial3"] == pytest.approx(5.36)
-    assert stage2_evidence["vial1_vs_vial2"] == "discard_range"
-    assert stage2_evidence["vial1_vs_vial3"] == "discard_range"
-
-    contradictory = _result("discard", 0.8)
-    contradictory["per_stage_comparison"][1].update({
-        "vial1_vs_vial2": "deadband",
-        "vial1_vs_vial3": "deadband",
-        "delta_e76_vial2": distance_vial2,
-        "delta_e76_vial3": distance_vial3,
-        "deterministic_stage_disposition": "discard",
-    })
-    guarded = guard_model_response(contradictory, built.prompt_payload)
-    assert guarded["guard_status"] == "excluded"
-    assert "per_stage_reference_relation_mismatch" in guarded["guard_reasons"]
-
-    correct = _result("discard", 0.8)
-    correct["per_stage_comparison"][1].update({
-        "vial1_vs_vial2": "discard_range",
-        "vial1_vs_vial3": "discard_range",
-        "delta_e76_vial2": distance_vial2,
-        "delta_e76_vial3": distance_vial3,
-        "deterministic_stage_disposition": "discard",
-    })
-    assert guard_model_response(correct, built.prompt_payload)["guard_status"] == "admitted"
-
-    contradictory_prose = copy.deepcopy(correct)
-    contradictory_prose["explanation"] = (
-        "The stage-2 DeltaE value 9.53 is below 2.0. "
-        "The structured disposition is discard."
-    )
-    guarded = guard_model_response(contradictory_prose, built.prompt_payload)
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["discard_score"] == pytest.approx(0.8)
-    assert guarded["explanation_status"] == "deterministic_fallback"
-    assert "threshold_claim_contradiction" in guarded["explanation_guard_reasons"]
-
-    tampered = copy.deepcopy(built.prompt_payload)
-    tampered_stage2 = next(
-        row for row in tampered["deterministic_evidence"]
-        if row["vial_position"] == 1 and row["stage_id"] == "stage-2"
-    )
-    tampered_stage2["vial1_vs_vial2"] = "deadband"
-    guarded = guard_model_response(correct, tampered)
-    assert "prompt_reference_relation_mismatch" in guarded["guard_reasons"]
-
-
-@pytest.mark.parametrize(
-    ("bundle_delta", "serialized_delta"),
-    [
-        (30.0411589036, 30.041158),
-        (9.529296785, 9.529297),
-    ],
-)
-def test_guard_admits_six_decimal_delta_e76_serialization(
-    tmp_path, bundle_delta, serialized_delta,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    target = next(
-        row for row in built.prompt_payload["deterministic_evidence"]
-        if row["vial_position"] == 1 and row["stage_id"] == "stage-1"
-    )
-    target["delta_e76_vial2"] = bundle_delta
-    target["vial1_vs_vial2"] = "discard_range"
-    result = _result("keep", 0.8)
-    result["per_stage_comparison"][0].update({
-        "delta_e76_vial2": serialized_delta,
-        "vial1_vs_vial2": "discard_range",
-    })
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert "per_stage_delta_e76_mismatch" not in guarded["guard_reasons"]
-
-
-@pytest.mark.parametrize(
-    ("bundle_delta", "response_delta", "relation", "expected_status"),
-    [
-        (0.0, 1.0e-6, "keep_range", "admitted"),
-        (0.0, 1.000001e-6, "keep_range", "excluded"),
-        (1_000_000.0, 1_000_000.000002, "discard_range", "excluded"),
-    ],
-)
-def test_delta_e76_serialization_tolerance_is_absolute_and_inclusive(
-    tmp_path, bundle_delta, response_delta, relation, expected_status,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    target = next(
-        row for row in built.prompt_payload["deterministic_evidence"]
-        if row["vial_position"] == 1 and row["stage_id"] == "stage-1"
-    )
-    target["delta_e76_vial2"] = bundle_delta
-    target["vial1_vs_vial2"] = relation
-    result = _result("keep", 0.8)
-    result["per_stage_comparison"][0].update({
-        "delta_e76_vial2": response_delta,
-        "vial1_vs_vial2": relation,
-    })
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == expected_status
-    assert ("per_stage_delta_e76_mismatch" in guarded["guard_reasons"]) is (
-        expected_status == "excluded"
-    )
-
-
-@pytest.mark.parametrize(
-    ("bundle_delta", "response_delta", "relation"),
-    [
-        (0.9999996, 1.0000004, "keep_range"),
-        (1.0000004, 0.9999996, "deadband"),
-        (1.0, 1.0000004, "keep_range"),
-        (1.0000004, 1.0, "deadband"),
-        (1.9999996, 2.0000004, "deadband"),
-        (2.0000004, 1.9999996, "discard_range"),
-        (2.0, 1.9999996, "discard_range"),
-        (1.9999996, 2.0, "deadband"),
-    ],
-)
-def test_delta_e76_serialization_tolerance_cannot_cross_reference_thresholds(
-    tmp_path, bundle_delta, response_delta, relation,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    target = next(
-        row for row in built.prompt_payload["deterministic_evidence"]
-        if row["vial_position"] == 1 and row["stage_id"] == "stage-1"
-    )
-    target["delta_e76_vial2"] = bundle_delta
-    target["vial1_vs_vial2"] = relation
-    result = _result("keep", 0.8)
-    result["per_stage_comparison"][0].update({
-        "delta_e76_vial2": response_delta,
-        "vial1_vs_vial2": relation,
-    })
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "excluded"
-    assert "per_stage_reference_relation_mismatch" in guarded["guard_reasons"]
-    assert "per_stage_delta_e76_mismatch" not in guarded["guard_reasons"]
-
-
-@pytest.mark.parametrize(
-    ("boundary", "relation"),
-    [(1.0, "keep_range"), (2.0, "discard_range")],
-)
-def test_delta_e76_exact_reference_boundaries_remain_admitted(
-    tmp_path, boundary, relation,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    target = next(
-        row for row in built.prompt_payload["deterministic_evidence"]
-        if row["vial_position"] == 1 and row["stage_id"] == "stage-1"
-    )
-    target["delta_e76_vial2"] = boundary
-    target["vial1_vs_vial2"] = relation
-    result = _result("keep", 0.8)
-    result["per_stage_comparison"][0].update({
-        "delta_e76_vial2": boundary,
-        "vial1_vs_vial2": relation,
-    })
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["guard_reasons"] == []
-
-
-@pytest.mark.parametrize("nonfinite", [float("nan"), float("inf"), float("-inf")])
-def test_delta_e76_serialization_tolerance_rejects_nonfinite_values(
-    tmp_path, nonfinite,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("keep", 0.8)
-    result["per_stage_comparison"][0]["delta_e76_vial2"] = nonfinite
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "excluded"
-    assert "per_stage_delta_e76_invalid" in guarded["guard_reasons"]
-
-
-def test_prose_failure_keeps_vote_and_substitutes_labelled_deterministic_fallback(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("keep", 0.8)
-    result["explanation"] = "The structured disposition is discard. Flush the line now."
-    guarded = guard_model_response(result, built.prompt_payload)
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["vote"] == pytest.approx(0.2)
-    assert guarded["guard_reasons"] == []
-    assert guarded["model_explanation"] == result["explanation"]
-    assert guarded["explanation_status"] == "deterministic_fallback"
-    assert guarded["explanation"].startswith("Deterministic fallback:")
-    assert guarded["explanation_guard_reasons"] == [
-        "operator_action_claim", "disposition_contradiction",
-    ]
-
-
-@pytest.mark.parametrize(
-    ("text", "reason"),
-    [
-        (None, "explanation_missing"),
-        ("", "explanation_missing"),
-        ("EV-NOT-IN-BUNDLE shows agreement. The structured disposition is keep.",
-         "citation_outside_bundle"),
-        ("DeltaE is 9.53 at stage 1. The structured disposition is keep.",
-         "numeric_claim_contradiction"),
-        ("Simulator particles show the result. The structured disposition is keep.",
-         "hidden_simulator_state_claim"),
-        ("There are 3 mL of residue. The structured disposition is keep.",
-         "residue_amount_claim"),
-        ("A leading slug caused the difference. The structured disposition is keep.",
-         "cause_claim"),
-        ("Direction is not assessable due to residue in the line. "
-         "The structured disposition is keep.", "cause_claim"),
-        ("The evidence supports discard. The cited comparison is clear.",
-         "disposition_contradiction"),
-        ("Please flush the line. The structured disposition is keep.",
-         "operator_action_claim"),
-        ("The operator needs to flush the line. The structured disposition is keep.",
-         "operator_action_claim"),
-        ("The structured disposition is discard. The cited comparison is clear.",
-         "disposition_contradiction"),
-    ],
-)
-def test_prose_guard_rejects_only_unsupported_claim_classes_without_dropping_vote(
-    tmp_path, text, reason,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("keep", 0.8)
-    result["explanation"] = text
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["vote"] == pytest.approx(0.2)
-    assert reason in guarded["explanation_guard_reasons"]
-    assert guarded["explanation_status"] == "deterministic_fallback"
-
-
-@pytest.mark.parametrize(
-    ("disposition", "text", "expected_status"),
-    [
-        (
-            "discard",
-            "The process appears well-controlled and free of defects.",
-            "deterministic_fallback",
-        ),
-        (
-            "keep",
-            "The process appears well-controlled and free of defects.",
-            "model_written",
-        ),
-        (
-            "keep",
-            "The process appears poorly controlled and has defects.",
-            "deterministic_fallback",
-        ),
-        (
-            "discard",
-            "The process appears poorly controlled and has defects.",
-            "model_written",
-        ),
-    ],
-)
-def test_prose_guard_checks_quality_claim_against_structured_disposition(
-    tmp_path, disposition, text, expected_status,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result(disposition, 0.8)
-    result["explanation"] = text
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["vote"] == pytest.approx(0.8 if disposition == "discard" else 0.2)
-    assert guarded["explanation_status"] == expected_status
-    assert (
-        "disposition_contradiction" in guarded["explanation_guard_reasons"]
-    ) is (expected_status == "deterministic_fallback")
-
-
-def test_prose_guard_rejects_minimally_edited_real_anomaly_explanation(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("discard", 0.8)
-    result["explanation"] = (
-        "I am inspecting a fluid-mixing process across three stages. I'll start by "
-        "checking the first stage, which involves dispensing into a vial. The liquid "
-        "appears to be a reddish-brown color and is being dispensed in a controlled "
-        "manner. I'm looking for any signs of overflow, splashing, or contamination, "
-        "but the vial is clean and the fill level is consistent. Moving to the second "
-        "stage, the liquid is being mixed with a different component, resulting in a "
-        "darker, more uniform color. The flow is smooth and the vial is properly seated. "
-        "In the final stage, the mixture is being further processed, and the color is "
-        "consistent with the expected final product. There are no visible bubbles, foam, "
-        "or foreign material in the liquid. The vials are all intact, and the overall "
-        "process appears to be well-controlled and free of defects."
-    )
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["vote"] == pytest.approx(0.8)
-    assert guarded["explanation_status"] == "deterministic_fallback"
-    assert guarded["explanation_guard_reasons"] == ["disposition_contradiction"]
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "The process requires adjustment to ensure proper fluid integration.",
-        (
-            "The mixture exhibits significant inconsistency across all stages, with high "
-            "DeltaE76 values and measurement spreads indicating poor blending. The "
-            "target vial deviates "
-            "markedly from the reference vials, suggesting stratification rather than "
-            "uniform mixing. Previous recipe direction cannot be assessed due to missing "
-            "color reference. The process requires adjustment to ensure proper "
-            "fluid integration."
-        ),
-    ],
-)
-def test_prose_guard_rejects_real_cosmos_adjustment_action_without_dropping_vote(
-    tmp_path, text,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("discard", 0.8)
-    result["explanation"] = text
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["vote"] == pytest.approx(0.8)
-    assert guarded["explanation_status"] == "deterministic_fallback"
-    assert guarded["explanation_guard_reasons"] == ["operator_action_claim"]
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "The structured disposition is keep.",
-        (
-            "The supplied evidence is internally consistent. The stage comparisons are "
-            "available. The image citations are supplied. The structured disposition is "
-            "keep. The confidence is 0.8."
-        ),
-    ],
-)
-def test_prose_sentence_count_alone_does_not_trigger_fallback(tmp_path, text):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("keep", 0.8)
-    result["explanation"] = text
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["explanation_status"] == "model_written"
-    assert guarded["explanation_guard_reasons"] == []
-
-
-def test_prose_guard_accepts_stage_and_vial_ordinals_with_exact_delta_e_values(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("keep", 0.8)
-    result["explanation"] = (
-        "Stage 1 has DeltaE 0 to vial 2 and remains in the keep range. "
-        "Stage 2 has DeltaE 0.0 to vial 3 and also remains in the keep range. "
-        "Keep is the structured disposition with confidence 0.80."
-    )
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["explanation_status"] == "model_written"
-    assert guarded["explanation_guard_reasons"] == []
-
-
-def test_prose_guard_accepts_qualitative_threshold_and_unavailable_reference_reason(
-    tmp_path,
-):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("discard", 0.8)
-    for target, comparison in zip(
-        (
-            row for row in built.prompt_payload["deterministic_evidence"]
-            if row["vial_position"] == 1
-        ),
-        result["per_stage_comparison"],
-        strict=True,
-    ):
-        target.update({
-            "delta_e76_vial2": 9.529296785,
-            "delta_e76_vial3": 30.0411589036,
-            "vial1_vs_vial2": "discard_range",
-            "vial1_vs_vial3": "discard_range",
-            "deterministic_disposition": "discard",
-        })
-        comparison.update({
-            "delta_e76_vial2": 9.529297,
-            "delta_e76_vial3": 30.041158,
-            "vial1_vs_vial2": "discard_range",
-            "vial1_vs_vial3": "discard_range",
-            "deterministic_stage_disposition": "discard",
-        })
-    result["explanation"] = (
-        "All stages show clear_consistent visual evidence. The deterministic disposition "
-        "for each stage is discard, with DeltaE76 values exceeding the keep threshold. "
-        "Previous recipe direction is not assessable due to unavailable reference."
-    )
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["explanation_status"] == "model_written"
-    assert guarded["explanation_guard_reasons"] == []
-
-
-def test_prose_guard_rejects_threshold_enum_contradiction_without_dropping_vote(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("keep", 0.8)
-    result["explanation"] = (
-        "Stage 1 is in the discard range. The structured disposition is keep."
-    )
-
-    guarded = guard_model_response(result, built.prompt_payload)
-
-    assert guarded["guard_status"] == "admitted"
-    assert "threshold_claim_contradiction" in guarded["explanation_guard_reasons"]
-    assert guarded["explanation_status"] == "deterministic_fallback"
-
-
-def test_prose_citation_guard_handles_production_evidence_and_v4_image_id_forms(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    bundle = copy.deepcopy(built.prompt_payload)
-    evidence_id = "EVID-BATCH-0001-V1-STAGE-1"
-    image_id = "v4-CASE-0001-F000123"
-    bundle["deterministic_evidence"][0]["evidence_id"] = evidence_id
-    bundle["images"][0]["image_id"] = image_id
-    result = _result("keep", 0.8)
-    result["evidence_citations"][0] = evidence_id
-    result["image_citations"][0] = image_id
-    result["per_stage_comparison"][0]["bundle_ids"] = [evidence_id]
-    result["explanation"] = (
-        f"{evidence_id} and {image_id} support the stage comparison. "
-        "The structured disposition is keep."
-    )
-
-    admitted = guard_model_response(result, bundle)
-    assert admitted["guard_status"] == "admitted"
-    assert admitted["explanation_status"] == "model_written"
-
-    result["explanation"] = (
-        "EVID-BATCH-OUTSIDE and v4-CASE-OUTSIDE-F999999 support the comparison. "
-        "The structured disposition is keep."
-    )
-    fallback = guard_model_response(result, bundle)
-    assert fallback["guard_status"] == "admitted"
-    assert fallback["explanation_guard_reasons"] == ["citation_outside_bundle"]
-    assert fallback["explanation_status"] == "deterministic_fallback"
-
-
-def test_guard_admits_attempt10_observations_without_redundant_citations(tmp_path):
-    cohort, locators = _cohort(tmp_path)
-    built = build_vial1_bundle(
-        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
-    )
-    result = _result("discard", 0.8)
-    result["per_stage_comparison"][0]["bundle_ids"] = [
-        "IMG-C1-V1-S1-end", "IMG-C1-V2-S1-end",
-    ]
-    assert all(tuple(row) == ("stage_id", "visual_assessment") for row in result["observations"])
-    guarded = guard_model_response(result, built.prompt_payload)
-    assert guarded["guard_status"] == "admitted"
-    assert guarded["guard_reasons"] == []
-
-
 def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(tmp_path):
     cohort, locators = _cohort(tmp_path)
     built = build_vial1_bundle(cohort, locators, tracker_receipts=_tracker_receipts(cohort))
     qwen = "Qwen/Qwen3-VL-8B-Instruct"
     receipt = aggregate_decision(built.prompt_payload, [
-        _attempt(qwen, json.dumps(_result("discard", 1.0))),
+        _attempt(qwen, json.dumps(_v2_result("discard", 1.0))),
     ])
     assert receipt["mean_discard_score"] == 0.5
     assert receipt["final_disposition"] == "discard"
@@ -1195,7 +677,7 @@ def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(
     unknown = {"repository": "not-a-model", "revision": "x", "raw_response": "{}"}
     with pytest.raises(ContractError, match="pinned"):
         aggregate_decision(built.prompt_payload, [unknown])
-    attempt = _attempt(qwen, json.dumps(_result()))
+    attempt = _attempt(qwen, json.dumps(_v2_result()))
     with pytest.raises(ContractError, match="duplicate"):
         aggregate_decision(built.prompt_payload, [attempt, attempt])
     forged = {**attempt, "guard_status": "admitted"}
@@ -1205,6 +687,24 @@ def test_equal_weight_aggregation_parses_guards_and_binds_unique_pinned_sources(
     tampered["deterministic_binding"]["disposition"] = "discard"
     with pytest.raises(ContractError, match="deterministic"):
         aggregate_decision(tampered, [])
+
+
+def test_aggregation_excludes_unhashable_model_disposition_without_crashing(tmp_path):
+    cohort, locators = _cohort(tmp_path)
+    built = build_vial1_bundle(
+        cohort, locators, tracker_receipts=_tracker_receipts(cohort)
+    )
+    malformed = _v2_result()
+    malformed["disposition"] = []
+
+    receipt = aggregate_decision(built.prompt_payload, [
+        _attempt("Qwen/Qwen3-VL-8B-Instruct", json.dumps(malformed)),
+    ])
+
+    assert receipt["valid_source_count"] == 1
+    assert receipt["final_disposition"] == "insufficient_evidence"
+    assert receipt["sources"][1]["guard_status"] == "excluded"
+    assert "disposition_invalid" in receipt["sources"][1]["guard_reasons"]
 
 
 def _development_manifest(tmp_path: Path, version: str, partition: str):
@@ -1273,9 +773,9 @@ def test_freeze_binds_sources_models_and_blocks_production_open_until_matching(t
     )
     freeze_sha = hashlib.sha256(freeze_path.read_bytes()).hexdigest()
     assert len(freeze["models"]) == 3
-    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v12"
-    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v9"
-    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v7"
+    assert freeze["schema_version"] == "wp7-vlm-development-freeze-v13"
+    assert freeze["prompt_id"] == "wp7-grounded-sequential-mixture-v10"
+    assert freeze["response_schema_id"] == "wp7-vlm-reasoned-response-v8"
     assert freeze["deterministic_policy"] == {
         "config_sha256": wp7.DETERMINISTIC_CONFIG_SHA256,
         **wp7.DETERMINISTIC_POLICY,
@@ -1559,7 +1059,7 @@ def test_sequential_runtime_delivers_all_images_to_one_exact_model_at_a_time(tmp
         ]
         repository = active.pop()
         calls.append(("invoke", repository, prompt, len(images)))
-        raw = json.dumps(_result("keep", 0.9))
+        raw = json.dumps(_v2_result("keep", 0.9))
         if repository != wp7.MODELS[0]["repository"]:
             raw = f"<think>compare</think><answer>{raw}</answer>"
         return {
@@ -1687,8 +1187,8 @@ def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
         calls.append(("invoke", hashlib.sha256(prompt.encode()).hexdigest(), len(images)))
         return {
             "status": "completed",
-            "response_raw": json.dumps(_result("keep", 0.9)),
-            "response_utf8_sha256": hashlib.sha256(json.dumps(_result("keep", 0.9)).encode()).hexdigest(),
+            "response_raw": json.dumps(_v2_result("keep", 0.9)),
+            "response_utf8_sha256": hashlib.sha256(json.dumps(_v2_result("keep", 0.9)).encode()).hexdigest(),
             "generated_token_count": 31,
             "prompt_token_count": 2048,
             "model_context_limit": 262144,
@@ -1711,7 +1211,7 @@ def test_one_model_runtime_publishes_exclusive_bound_raw_receipt(tmp_path):
     )
 
     assert output.is_file()
-    assert receipt["schema_version"] == "wp7-vlm-model-attempt-receipt-v2"
+    assert receipt["schema_version"] == "wp7-vlm-model-attempt-receipt-v3"
     assert receipt["model"]["trust_remote_code"] is False
     assert receipt["model"]["snapshot_inventory_sha256"] == "b" * 64
     assert receipt["invoke"]["elapsed_seconds"] == 1.25
@@ -1769,7 +1269,7 @@ def test_runtime_validates_reviewed_freeze_before_model_load(tmp_path):
     assert called is False
 
 
-def test_non_qwen_runtime_requires_guarded_qwen_attempt_before_load(tmp_path):
+def test_non_qwen_runtime_has_no_qwen_prerequisite(tmp_path):
     cohort, locators, trackers, freeze, freeze_sha = _runtime_files(tmp_path)
     called = False
 
@@ -1779,7 +1279,7 @@ def test_non_qwen_runtime_requires_guarded_qwen_attempt_before_load(tmp_path):
         raise AssertionError("must not load")
 
     cosmos = wp7.MODELS[1]
-    with pytest.raises(ContractError, match="Qwen attempt first"):
+    with pytest.raises(AssertionError, match="must not load"):
         wp7.run_one_model_attempt_from_files(
             cohort, locators, trackers,
             freeze_path=freeze, expected_freeze_sha256=freeze_sha,
@@ -1787,7 +1287,7 @@ def test_non_qwen_runtime_requires_guarded_qwen_attempt_before_load(tmp_path):
             snapshot_path=tmp_path / "snapshot", output_path=tmp_path / "cosmos.json",
             runtime_loader=loader, runtime_invoker=lambda *_args, **_kwargs: None,
         )
-    assert called is False
+    assert called is True
 
 
 def test_production_mode_binds_new_tracker_cohort_after_reviewed_policy_freeze(tmp_path):
@@ -1822,7 +1322,7 @@ def test_production_mode_binds_new_tracker_cohort_after_reviewed_policy_freeze(t
     class Runtime:
         inventory = {"files": [{"path": "config.json", "bytes": 2, "sha256": "a" * 64}], "sha256": "b" * 64}
 
-    raw = json.dumps(_result("keep", 0.9))
+    raw = json.dumps(_v2_result("keep", 0.9))
 
     def invoker(_runtime, _prompt, _images, *, max_new_tokens, logits_processor, processor_pixels):
         assert max_new_tokens == 10000
@@ -1955,7 +1455,7 @@ def test_cpu_aggregate_accepts_zero_to_three_bound_attempts_and_rejects_tamper(t
     class Runtime:
         inventory = {"files": [{"path": "config.json", "bytes": 2, "sha256": "a" * 64}], "sha256": "b" * 64}
 
-    raw = json.dumps(_result("keep", 0.9))
+    raw = json.dumps(_v2_result("keep", 0.9))
     attempt_path = tmp_path / "attempt.json"
 
     def invoker(_runtime, _prompt, _images, *, max_new_tokens, logits_processor, processor_pixels):

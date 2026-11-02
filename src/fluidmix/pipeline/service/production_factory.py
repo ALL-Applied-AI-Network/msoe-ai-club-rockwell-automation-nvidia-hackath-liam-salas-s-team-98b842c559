@@ -232,7 +232,7 @@ def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) ->
         if _sha(Path(path)) != expected:
             raise ProductionFactoryError(f"accepted artifact SHA-256 mismatch: {path}")
     freeze = json.loads(VLM_FREEZE.read_bytes())
-    if freeze.get("schema_version") != "wp7-vlm-development-freeze-v12" or {
+    if freeze.get("schema_version") != "wp7-vlm-development-freeze-v13" or {
         row.get("repository"): row.get("revision")
         for row in freeze.get("models", []) if isinstance(row, Mapping)
     } != MODEL_REVISIONS:

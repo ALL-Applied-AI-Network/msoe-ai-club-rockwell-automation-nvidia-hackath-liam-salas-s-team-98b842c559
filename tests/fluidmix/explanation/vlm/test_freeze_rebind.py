@@ -9,6 +9,8 @@ import pytest
 OLD_COMMIT = "10c106fbd38e3da34d902abb7d920c5a4041440e"
 OLD_PATH = "src/fluidmix/wp7_vlm_decision.py"
 OLD_SHA256 = "06694591e642b7bc558bd743fd9c9a97d05ba4162c7e9175d77ad2cd979f689b"
+ONION_COMMIT = "98141660eda83a5176eca7b578d26bf7b550cfa1"
+ONION_PATH = "src/fluidmix/explanation/vlm/decision.py"
 NEW_SHA256 = "0fb8213220b545f18bc9e95a603933004ae948acc7f95a005c911c0458594645"
 FREEZE_SHA256 = "8d5a884c8bf7438b291816473132d5c61f24c3d34d3c3654c827567006aae3e5"
 
@@ -16,6 +18,14 @@ FREEZE_SHA256 = "8d5a884c8bf7438b291816473132d5c61f24c3d34d3c3654c827567006aae3e
 def _old_source() -> bytes:
     return subprocess.run(
         ["git", "show", f"{OLD_COMMIT}:{OLD_PATH}"],
+        check=True,
+        stdout=subprocess.PIPE,
+    ).stdout
+
+
+def _onion_source() -> bytes:
+    return subprocess.run(
+        ["git", "show", f"{ONION_COMMIT}:{ONION_PATH}"],
         check=True,
         stdout=subprocess.PIPE,
     ).stdout
@@ -36,7 +46,6 @@ def test_rebind_proves_move_only_and_changes_only_source_hash(tmp_path):
         "deterministic_policy": {"keep": {"threshold": 1.0}},
     }
     old_freeze.write_text(json.dumps(old_payload, sort_keys=True, indent=2) + "\n")
-    onion = Path("src/fluidmix/explanation/vlm/decision.py")
     output = tmp_path / "freeze.json"
     receipt_path = tmp_path / "receipt.json"
 
@@ -47,7 +56,8 @@ def test_rebind_proves_move_only_and_changes_only_source_hash(tmp_path):
         accepted_source_commit=OLD_COMMIT,
         accepted_source_path=OLD_PATH,
         accepted_source_sha256=OLD_SHA256,
-        onion_source=onion,
+        onion_source_bytes=_onion_source(),
+        onion_source_path=ONION_PATH,
         onion_source_sha256=NEW_SHA256,
         output_freeze=output,
         output_receipt=receipt_path,

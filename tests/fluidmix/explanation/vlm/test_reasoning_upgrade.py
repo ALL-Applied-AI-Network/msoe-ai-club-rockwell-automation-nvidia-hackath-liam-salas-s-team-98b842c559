@@ -34,13 +34,40 @@ COSMOS = "nvidia/Cosmos-Reason2-8B"
 ANOMALY = "aacudad/AnomalyThink-Qwen3-VL-8B-KCR"
 
 
+def test_v2_response_contract_is_reasoning_led_and_bounded() -> None:
+    assert RESPONSE_FIELD_ORDER == (
+        "stages", "disposition", "confidence",
+        "agrees_with_deterministic", "why_agree_or_disagree",
+        "physics_used", "explanation", "evidence_citations",
+        "image_citations",
+    )
+    assert RESPONSE_SCHEMA["required"] == list(RESPONSE_FIELD_ORDER)
+    stage = RESPONSE_SCHEMA["properties"]["stages"]["items"]
+    assert stage["required"] == [
+        "stage_id", "what_i_see", "physical_reasoning",
+        "vial1_vs_references", "image_quality", "cited_image_ids",
+    ]
+    assert stage["properties"]["what_i_see"]["maxLength"] == 600
+    assert stage["properties"]["physical_reasoning"]["maxLength"] == 600
+    assert RESPONSE_SCHEMA["properties"]["why_agree_or_disagree"]["maxLength"] == 600
+    assert RESPONSE_SCHEMA["properties"]["explanation"]["maxLength"] == 400
+    normalized = " ".join(USER_PROMPT_TEMPLATE.lower().split())
+    assert "must copy" not in normalized
+    assert "authoritative" not in normalized
+    assert "confidence must" not in normalized
+
+
 def _valid_response() -> str:
     return (
-        '{"observations":[{"stage_id":"stage-1","visual_assessment":"weak"'
-        '}],'
-        '"per_stage_comparison":[],'
-        '"disposition":"insufficient_evidence","disposition_confidence":0.5,'
-        '"explanation":"The supplied evidence does not support a disposition. The structured result is insufficient evidence.",'
+        '{"stages":[{"stage_id":"stage-1","what_i_see":"The images are limited",'
+        '"physical_reasoning":"Glare could obscure the colour",'
+        '"vial1_vs_references":"cannot_tell","image_quality":"limited",'
+        '"cited_image_ids":[]}],'
+        '"disposition":"insufficient_evidence","confidence":0.5,'
+        '"agrees_with_deterministic":"partly",'
+        '"why_agree_or_disagree":"The images do not resolve the comparison",'
+        '"physics_used":["refraction"],'
+        '"explanation":"The images do not provide enough evidence.",'
         '"evidence_citations":["EV-1"],'
         '"image_citations":["IMG-1"]}'
     )
@@ -50,10 +77,10 @@ def test_prompt_is_domain_grounded_without_forbidden_oracle_language() -> None:
     combined = f"{SYSTEM_PROMPT}\n{USER_PROMPT_TEMPLATE}".lower()
     for required in (
         "t100", "t200", "t400", "t300", "leading slug", "vials 2 and 3",
-        "meniscus", "bubbles", "foam", "splashing", "settling", "specular",
-        "refraction", "curvature", "clamp occlusion", "motion blur",
-        "lighting drift", "cielab", "de76", "mad", "iqr", "fill level",
-        "previous-recipe direction", "bundle ids",
+        "meniscus", "bubbles", "foam", "settling", "specular", "refraction",
+        "curved-glass", "occlusion by the clamp", "motion blur",
+        "lighting drift", "cielab", "deltae76", "mad", "iqr", "fill level",
+        "stratification", "reynolds number", "path length",
     ):
         assert required in combined
     for forbidden in ("beer-lambert", "simulator truth", "oracle", "test label", "file path"):
@@ -61,7 +88,7 @@ def test_prompt_is_domain_grounded_without_forbidden_oracle_language() -> None:
 
 
 def test_response_schema_freezes_reasoning_fields_before_disposition() -> None:
-    assert RESPONSE_FIELD_ORDER[:2] == ("observations", "per_stage_comparison")
+    assert RESPONSE_FIELD_ORDER[:2] == ("stages", "disposition")
     assert RESPONSE_SCHEMA["required"] == list(RESPONSE_FIELD_ORDER)
     assert list(RESPONSE_SCHEMA["properties"]) == list(RESPONSE_FIELD_ORDER)
     assert MODEL_REASONING_MODES == {
@@ -70,78 +97,43 @@ def test_response_schema_freezes_reasoning_fields_before_disposition() -> None:
     }
 
 
-def test_response_schema_requires_structured_observations_and_stage_quality() -> None:
-    observation = RESPONSE_SCHEMA["properties"]["observations"]["items"]
-    assert observation == {
-        "type": "object",
-        "additionalProperties": False,
-        "required": ["stage_id", "visual_assessment"],
-        "properties": {
-            "stage_id": {"type": "string", "minLength": 1},
-            "visual_assessment": {
-                "enum": ["clear_consistent", "weak", "low", "conflicting"]
-            },
-        },
-    }
-    reliability = RESPONSE_SCHEMA["properties"]["per_stage_comparison"]["items"][
-        "properties"
-    ]["reliability"]
-    assert reliability == {
+def test_response_schema_requires_reasoning_and_stage_quality() -> None:
+    stage = RESPONSE_SCHEMA["properties"]["stages"]["items"]
+    assert stage["properties"]["vial1_vs_references"] == {
         "enum": [
-            "clear_consistent",
-            "weak",
-            "low",
-            "conflicting",
+            "same", "slightly_different", "clearly_different", "cannot_tell",
         ]
     }
+    assert stage["properties"]["image_quality"] == {
+        "enum": ["good", "limited", "poor"]
+    }
+    assert stage["properties"]["cited_image_ids"] == {
+        "type": "array", "items": {"type": "string"},
+    }
 
 
-def test_stage_threshold_outcomes_are_closed_structured_fields() -> None:
-    stage = RESPONSE_SCHEMA["properties"]["per_stage_comparison"]["items"]
-    assert stage["required"] == [
-        "stage_id", "phase_and_fill_match", "vial1_vs_vial2",
-        "vial1_vs_vial3", "delta_e76_vial2", "delta_e76_vial3",
-        "deterministic_stage_disposition",
-        "stream_tank_consistency", "previous_recipe_direction", "reliability",
-        "bundle_ids",
-    ]
-    for field in ("vial1_vs_vial2", "vial1_vs_vial3"):
-        assert stage["properties"][field] == {
-            "enum": ["keep_range", "deadband", "discard_range"]
-        }
-    assert stage["properties"]["deterministic_stage_disposition"] == {
+def test_disposition_confidence_value_and_agreement_are_closed_fields() -> None:
+    assert RESPONSE_SCHEMA["properties"]["disposition"] == {
         "enum": ["discard", "insufficient_evidence", "keep"]
     }
-    assert stage["properties"]["stream_tank_consistency"] == {
-        "enum": ["consistent", "inconsistent"]
+    assert RESPONSE_SCHEMA["properties"]["confidence"] == {
+        "type": "number", "minimum": 0.0, "maximum": 1.0,
     }
-    assert stage["properties"]["previous_recipe_direction"] == {
-        "enum": [
-            "toward_previous_recipe", "not_toward_previous_recipe",
-            "not_assessable",
-        ]
-    }
-    assert stage["properties"]["phase_and_fill_match"] == {
-        "enum": ["matched", "uncertain", "not_matched"]
+    assert RESPONSE_SCHEMA["properties"]["agrees_with_deterministic"] == {
+        "enum": ["yes", "no", "partly"]
     }
     assert RESPONSE_SCHEMA["properties"]["explanation"] == {
-        "type": "string", "minLength": 1,
+        "type": "string", "minLength": 1, "maxLength": 400,
     }
 
 
-def test_prompt_requires_stage_local_comparison_citations() -> None:
+def test_prompt_requests_independent_stage_reasoning_without_copy_instructions() -> None:
     normalized = " ".join(USER_PROMPT_TEMPLATE.lower().split())
-    assert (
-        "each stage comparison's bundle_ids may contain only ids belonging to "
-        "that exact stage"
-    ) in normalized
-    assert (
-        "must copy the target evidence's exact preclassified vial1_vs_vial2 and "
-        "vial1_vs_vial3 strings"
-    ) in normalized
-    assert "must not recalculate those relations" in normalized
-    assert "2 to 4 plain operator sentences" in normalized
-    assert "copy its exact structured value" in normalized
+    assert "early, mid and end images" in normalized
+    assert "reason about what physically explains it" in normalized
+    assert "whether you agree with the deterministic rule" in normalized
+    assert "must copy" not in normalized
+    assert "authoritative" not in normalized
 
 
 def test_model_specific_parser_requires_exactly_one_native_answer() -> None:

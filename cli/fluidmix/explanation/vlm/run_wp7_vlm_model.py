@@ -25,7 +25,6 @@ def main() -> int:
     parser.add_argument("--repository", required=True)
     parser.add_argument("--revision", required=True)
     parser.add_argument("--snapshot", required=True)
-    parser.add_argument("--qwen-attempt-receipt")
     parser.add_argument(
         "--production", action="store_true",
         help="require production camera metadata and bind a new tracker cohort",
@@ -41,7 +40,6 @@ def main() -> int:
         repository=args.repository,
         revision=args.revision,
         snapshot_path=args.snapshot,
-        prerequisite_qwen_receipt_path=args.qwen_attempt_receipt,
         production=args.production,
         output_path=args.output,
         runtime_loader=load_stock_runtime,

@@ -1,130 +1,105 @@
 # WP7 image-grounded VLM decision boundary
 
-Status: the CPU contract, one-model runtime CLI and synthetic tests are implemented.
-This change does not run a GPU model or publish a model decision.
+Status: response contract v2, its CPU guard, independent one-model attempt path and synthetic
+tests are implemented in this branch. No v13 development freeze has been reviewed, no v2 GPU
+attempt has run, and no model-quality or physical-validity result follows from the CPU work.
 
-`fluidmix.explanation.vlm.decision` scores only vial 1 in a complete three-vial cohort.
-Vials 2 and 3 supply same-cohort reference measurements and images; their
-deterministic dispositions are removed from the prompt payload. The component accepts
-exactly three `wp7-camera-fill-step-receipt-v1` artifacts through the public
-`validate_fill_step_receipt` boundary. It does not derive stream changes, select frames,
-run a CNN or import Part-A geometry code.
+`fluidmix.explanation.vlm.decision` judges only vial 1 in a complete three-vial cohort. The
+prompt describes vials 2 and 3 as later same-recipe references after vial 1 flushed the line.
+That is a comparison assumption, not measured proof that either reference is physically clean.
+The bundle supplies early, mid and settled end images, camera-derived Lab measurements, recipe
+context and the deterministic rule result. It supplies no Beer-Lambert expectation, computed
+clean colour, hidden simulator state, oracle mask, residue amount or prescribed label.
 
-Each accepted tracker stage supplies three distinct opaque early/mid/end image IDs,
-tank identity, stream-step and fill-step agreement, stream Lab/spread, recipe amounts,
-an explicit `measured_volume_ml`, and a `twin_geometry_equivalent_volume_ml`. The latter
-is camera evidence interpreted through frozen twin geometry; neither field is calibrated
-physical liquid volume or plant truth. The tracker claim boundary and calibration,
-producer and receipt hashes remain in the VLM bundle provenance. Local image paths and
-hashes are verified in a separate locator binding and never enter prompt JSON or text.
+## Response contract v2
 
-Qwen is non-thinking and emits only strict JSON, with ordered `observations` and
-`per_stage_comparison` fields before its disposition. Cosmos Reason2 and AnomalyThink emit
-exactly one `<think>...</think><answer>{strict JSON}</answer>` sequence. The parser extracts only
-that answer body; one bounded three-backtick fence may be removed inside it as a fallback.
-Other fences and extra or missing tags fail closed. Raw JSON names `disposition_confidence` (this
-replaces the ambiguous raw `discard_score`). After all guards pass, a discard confidence
-is copied to normalized `discard_score`, while a keep confidence is normalized as
-`1 - disposition_confidence`; the receipt retains that normalized score.
-Insufficient or guard-failed results have no vote. The deterministic source and each
-admitted VLM have equal weight; two valid sources are required and a mean of exactly
-0.5 is discard. Aggregation accepts only raw attempts from the three exact pinned
-repository/revision pairs, rejects duplicate/unknown/caller-guarded rows, and performs
-parse and guard internally.
+The model reasons from the images and its physical knowledge instead of copying deterministic
+labels. Its ordered JSON contains one `stages` row per bundle stage, then `disposition`,
+`confidence`, `agrees_with_deterministic`, `why_agree_or_disagree`, `physics_used`,
+`explanation`, `evidence_citations` and `image_citations`. Each stage reports what the
+model sees, its physical reasoning, the vial-1/reference comparison, image quality and optional
+stage-local image citations.
 
-The bundle recomputes target-to-vial-2 and target-to-vial-3 CIE76 distance from the
-same-stage median Lab values. It also requires a closed, self-hashed deterministic
-decision receipt binding every stage disposition and limit code to its evidence,
-the exact accepted configuration hash and source-artifact hash. Validation independently
-replays the frozen CIE76 rule: a stage is `keep` only when both reference distances are at
-most 1.0, `discard` only when both are at least 2.0, and otherwise
-`insufficient_evidence`; any discard controls the overall result, while overall keep
-requires every stage to be keep. Aggregation derives its one deterministic vote from that
-validated bundle binding.
+The three long reasoning fields are limited to 600 characters each and the operator explanation
+to 400 characters. The parser retains its 65,536-byte response ceiling. Citation arrays may be
+empty; when an ID is supplied, it must exist in the bundle, and a stage citation must belong to
+that stage. The guard requires exactly one stage row for every bundle stage in bundle order.
 
-The v4 development freeze accepts structured input manifests only. Every manifest must
-identify V3 or V4, `synthetic_twin` origin, and `twin_train` or `twin_validation`; both
-V3 and V4 must be present. Referenced artifacts are rehashed, while evaluation, test,
-real and video-5 inputs are rejected. Freeze creation also requires
-`--materialization-receipt`; its self-hash, manifest hashes, tracker receipt hashes,
-tracker source hash and deterministic configuration must match the supplied inputs. The
-freeze binds that receipt's file SHA-256, the exact structured deterministic policy, the
-decision source, prompt, response schema, parser, aggregation constants, exact pinned
-model repositories/revisions, tracker receipts, tracker calibration and producer hashes,
-and every named development input hash. Earlier freezes must be regenerated.
-It also binds the stock adapter's exact effective generation configuration:
-`do_sample=false`, `max_new_tokens=10000`, `batch_size=1`, seed 17, deterministic Torch/CUDA,
-`CUBLAS_WORKSPACE_CONFIG=:4096:8`, and processor pixel bounds 1 through 16,777,216. Freeze
-validation rejects any missing, additional or changed field. Each attempt records requested and
-effective budget, prompt tokens, context limit, fallback proof, latency and peak memory. The
-pinned configurations expose a 262,144-token text context, so 10,000 is configuration-compatible
-only when the recorded prompt is at most 252,144 tokens; this is not a GB10 memory or generation
-claim. A lower per-model value requires a frozen proof receipt, and no fallback is currently
-justified. Existing freezes and attempts bound
-to them must be regenerated; they cannot be migrated by editing their self-hashed JSON.
-This freeze-time validation plus the exact receipt file hash is the transitive provenance
-anchor: runtime requires the separately reviewed freeze file SHA-256, so changing the
-materialization-receipt identity also changes the required reviewed freeze identity. Runtime
-does not reopen the materialization receipt or accept a caller-supplied replacement.
-Production loading requires the reviewed freeze file's SHA-256 and validates it before
-opening the production bundle path.
+The deterministic rule is a separate, equal-weight source, not an independent measurement. A VLM
+may agree, partly agree or disagree with it. The guard does not require copied relations, copied
+DeltaE values, agreement, threshold recomputation or confidence caps.
 
-`run_sequential_vlm_runtime` is the executable adapter for the three models. It uses
-the exact local-only pinned stock runtime, delivers the complete ordered early/mid/end
-target plus vial-2/vial-3 image set without the generic plan loader's six-image cap,
-routes raw text through parse/guard/aggregate, and releases each runtime reference
-before loading the next model. Importing or testing this module does not load weights.
+The factual guard excludes the whole model source, with no score and no replacement explanation,
+when it finds invalid structure, an unsupported ID, nonfinite or out-of-range confidence, an
+overlength field, hidden simulator state, a quantified residue claim, an operator instruction,
+an asserted physical cause, or an explicit prose disposition that conflicts with the structured
+one. Qualified hypotheses such as “consistent with stratification” or “could reflect carryover”
+are allowed. Numeric prose checking is deliberately narrow: explicit DeltaE and confidence claims
+must match the bundle/response; other numbers are not checked. Raw output and guard reasons remain
+available for review.
 
-For the real development speed path, `scripts/run_wp7_vlm_model.py` loads exactly one
-model and publishes one no-clobber `wp7-vlm-model-attempt-receipt-v2`. It accepts the
-path-free cohort, a separate internal image-locator file and exactly three tracker
-receipts. Before model loading it verifies the caller-supplied reviewed freeze SHA-256,
-the closed freeze contract and, in development mode, its exact frozen tracker-cohort
-binding. `--production` instead validates that frozen policy before opening the new
-cohort, requires complete production camera metadata, then binds the newly validated
-tracker receipts into the attempt. The receipt retains
-only prompt hashes, ordered image IDs/hashes, source-artifact hashes, the freeze hash,
-the exact repository/revision and snapshot-inventory hash, raw response, latency and
-memory telemetry; local image and snapshot paths are not published or prompted.
+After admission, discard contributes `confidence`, keep contributes `1 - confidence`, and
+`insufficient_evidence` contributes no vote. The deterministic source contributes 1 for discard,
+0 for keep and no vote for insufficient evidence. Sources have equal arithmetic weight, at least
+two numeric votes are required, and a mean discard score of exactly 0.5 is discard. These sources
+are correlated because they use overlapping images and Lab evidence.
 
-Qwen is the first allowed attempt. The first development Qwen receipt is retained as
-failure evidence: generation completed at the old 384-token cap, but its raw JSON ended
-mid image citation and therefore did not parse. The 10,000-token request is a frozen runtime
-requirement, not evidence that a future response will fit memory, parse or pass the guard.
-Cosmos Reason2 and AnomalyThink require a bound Qwen
-attempt whose raw JSON parses and passes the existing response guard. All three use the
-pinned local-only stock Qwen3-VL runtime with `trust_remote_code=False`. The separate
-`scripts/aggregate_wp7_vlm_attempts.py` command is CPU-only: it reconstructs the bundle,
-validates zero to three self-hashed attempt receipts against the exact same prompt,
-images, freeze and sources, and then calls the existing equal-weight aggregator. A
-malformed or guard-failed attempt remains excluded; it is never repaired into a vote.
+## Inputs, provenance and frozen artifacts
 
-Every early/mid/end image is cropped at native resolution to the frozen vial ROI. Full frames are
-not delivered. Bundle and attempt provenance binds ROI coordinates, source full-frame pixel hash,
-encoded crop hash, crop pixel hash, and source/crop dimensions. The processor maximum is above
-every crop size, so pixel-budget processing cannot downscale a crop.
+The component accepts exactly three `wp7-camera-fill-step-receipt-v1` artifacts through the
+public tracker validation boundary. Each stage binds early/mid/end image identities, tank and fill
+step, stream Lab/spread, recipe amounts and camera-derived fill state. Local paths are verified
+through a separate locator and never enter prompt text.
 
-Constrained decoding uses optional `xgrammar==0.2.8` (Apache-2.0). Qwen constrains the whole JSON;
-the native models use a one-pass structural sequence with free think text and a schema-constrained
-answer. Post-parse validation remains defense in depth, not a substitute. Install exact wheels
-into a worktree-local overlay without modifying the shared ML environment:
+The bundle independently recomputes vial-1-to-reference CIE76 distances and validates the closed,
+self-hashed deterministic receipt against the frozen 1.0/2.0 policy. This validation protects the
+separate deterministic vote; it no longer dictates VLM output fields.
 
-    python -m pip install --target .vlm-overlay --no-deps --require-hashes \
-      -r requirements-vlm-constrained.txt
+Breaking artifacts are versioned rather than rewritten:
 
-The requirements file pins ARM64 wheel hashes. An API and actual-tokenizer compile probe created
-fresh Hugging Face `LogitsProcessor` instances for all three pinned tokenizers; no weights,
-generation or GPU call was used. Runtime fails closed if import or grammar construction fails.
+- development freeze: `wp7-vlm-development-freeze-v13`;
+- one-model attempt: `wp7-vlm-model-attempt-receipt-v3`;
+- aggregation receipt/publication: v2;
+- prompt evidence payload: v5, unchanged because its data shape is unchanged.
 
-## Current evidence and remaining work
+A v13 freeze binds the exact decision source, prompts, response schema, parser, guard, aggregation
+constants, pinned models, tracker inputs, materialization receipt and generation configuration.
+Earlier freezes and attempts are immutable historical evidence and must not be edited into the new
+versions.
 
-The accepted tracker report now records 23 of 36 supported items and supplies three
-complete three-vial cohorts to this boundary. Those are source-artifact observations,
-not VLM accuracy or physical-volume results. This runtime does not reinterpret the
-support denominator, select replacement frames, or create tracker observations.
+## Model execution
 
-The next runtime step is to review the development freeze hash, run Qwen on one accepted
-cohort, and continue to Cosmos Reason2 or AnomalyThink only when the Qwen output parses
-and passes the guard. Synthetic unit tests prove fail-closed schemas and arithmetic only;
-they do not validate camera accuracy, physical volume, carryover detection or model
-quality.
+Qwen3-VL-8B constrains the whole response to the v2 JSON schema. Cosmos-Reason2-8B and
+AnomalyThink-Qwen3-VL-8B keep free `<think>` text and constrain only the JSON inside
+`<answer>`. All use the existing pinned revisions, local-only stock runtime,
+`trust_remote_code=False`, deterministic settings and the 10,000-token request.
+
+Each model attempt is operationally independent. Cosmos and AnomalyThink no longer require a Qwen
+receipt or a Qwen guard pass. The one-model command is:
+
+    python3 cli/fluidmix/explanation/vlm/run_wp7_vlm_model.py ...
+
+It verifies the reviewed freeze before opening runtime inputs and publishes one no-clobber v3
+attempt receipt. CPU aggregation accepts zero to three unique pinned attempt receipts:
+
+    python3 cli/fluidmix/explanation/vlm/aggregate_wp7_vlm_attempts.py ...
+
+Malformed and guard-failed responses remain recorded but do not vote. The runner service maps the
+raw v2 `confidence` field to its existing HMI event contract and emits explanations only for
+admitted model-written sources. There is no deterministic fallback presented as model output.
+
+Constrained decoding uses `xgrammar==0.2.8`. A tokenizer/grammar compile probe is CPU-compatible,
+but schema compatibility is not evidence that any model will finish generation or pass the guard.
+
+## Verification boundary and next gate
+
+CPU tests can establish schema closure, receipt hashing, stage coverage, guard behavior,
+aggregation arithmetic and service-event compatibility. They cannot establish camera accuracy,
+carryover detection, causal accuracy, model quality, sim-to-real transfer or plant readiness.
+
+The next gated step is to review the code and a newly generated v13 V3/V4 development freeze.
+Only after separate compute authorization should the three pinned models run independently on the
+same frozen cases. Record parse status, guard admission and reasons, disposition/confidence,
+deterministic agreement, aggregation, latency, memory and human review of the physics text. Any
+prompt, schema, guard or runtime change after observation requires a new code identity and freeze;
+failed attempts remain evidence and are never overwritten.

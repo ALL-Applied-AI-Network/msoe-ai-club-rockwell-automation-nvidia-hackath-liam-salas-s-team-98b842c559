@@ -22,13 +22,6 @@ class ContractError(ValueError):
 
 PHASES = ("early", "mid", "end")
 DISPOSITIONS = {"keep", "discard", "insufficient_evidence"}
-STAGE_RELIABILITY = ("clear_consistent", "weak", "low", "conflicting")
-REFERENCE_RELATIONS = ("keep_range", "deadband", "discard_range")
-PHASE_AND_FILL_MATCH = ("matched", "uncertain", "not_matched")
-STREAM_TANK_CONSISTENCY = ("consistent", "inconsistent")
-PREVIOUS_RECIPE_DIRECTIONS = (
-    "toward_previous_recipe", "not_toward_previous_recipe", "not_assessable",
-)
 AGGREGATION = {"threshold": 0.5, "minimum_valid_sources": 2, "weighting": "equal"}
 DETERMINISTIC_CONFIG_SHA256 = "6145a4da5c452ff4c8e8d4c6018ffeb5009410501f2a7438efd867317962057e"
 
@@ -127,126 +120,100 @@ class ImageInput:
     path: Path
     sha256: str
     image_id: str | None = None
-SYSTEM_PROMPT = """You assess a sequential fluid-mixing fill from evidence in one supplied bundle.
-T100, T200, and T400 are dosed in the listed order; T300 is out of service.
-Each addition can mix incompletely or remain stratified. During a recipe changeover, a leading slug
-remaining in the shared dispense path can shift vial 1 toward the previous recipe; vials 2 and 3
-are flushed same-recipe references. This is a comparison pattern, not permission to claim
-a cause.
+SYSTEM_PROMPT = """You are a process engineer inspecting a sequential liquid-dosing line with a fixed camera.
+Reason from physics you already know; the bundle gives measurements, not conclusions.
 
-Compare early, mid, and end images like-for-like: same stage, fill level, frozen vial ROI, fixed
-camera metadata, viewpoint, lighting, and phase. Meniscus shape, bubbles, foam, splashing,
-settling, and the stable end-of-fill window can change appearance; that stable end window is the
-most trustworthy visual window. Reflections, specular highlights,
-refraction, vial curvature, clamp occlusion, motion blur, and lighting drift are possible camera
-effects. Read fixed resolution, frame rate, exposure, white balance, viewpoint, and vial ROI from
-the bundle. Treat conflicting weak evidence as insufficient evidence.
+The line: one shared dispense nozzle doses T100, T200 and T400 (T300 is out of service) into a
+vial, in recipe order. Each vial is filled in stages. Vials 2 and 3 of a cohort are filled
+after the line has been flushed by vial 1, so they are same-recipe references. Vial 1 is the
+one being judged: is its liquid the colour the recipe should produce, or has it been changed
+by something?
 
-CIELAB L* is lightness, a* is green-to-red, and b* is blue-to-yellow. dE76 is Euclidean distance
-in those three channels. The frozen rule is keep only when both same-stage reference distances
-are at most 1.0, discard only when both are at least 2.0, and otherwise insufficient evidence.
-MAD and IQR describe measurement spread and therefore trust, not a new threshold. Use each
-stream's median Lab and spread with its mL, tank, and order. Check tracker
-tank and step identity, measured-versus-expected fill agreement, and the exact supplied
-tank_cluster_consistent boolean. Report stream-tank consistency only as consistent when that
-boolean is true and inconsistent when it is false. Check matching fill levels. Assess the
-previous-recipe direction only when the bundle says a previous-recipe colour reference is
-available; otherwise report not_assessable and make no directional claim in prose.
+Physics to consider (use what applies; say which you relied on):
+- Fluid transport and carryover: residual volume and wall film in a shared line or nozzle
+  (dead volume, hold-up), a leading slug of the previous liquid at a changeover, and
+  laminar versus turbulent flow in the line.
+- Mixing in the vial: a jet or stream entering a pool (entrainment, Reynolds number),
+  diffusion versus convection timescales, density and viscosity differences between
+  additions causing layering or stratification, buoyant plumes and Rayleigh-Taylor-type
+  overturning, and settling once the stream stops.
+- Colour of mixtures: dyes mix subtractively, so the colour depends on concentration and on
+  optical path length (a fuller or wider column looks more saturated). Equal dye ratios
+  should look alike at the same fill height; a wrong ratio shifts hue, not just lightness.
+- Imaging: curved-glass refraction and lensing, the meniscus, specular highlights,
+  reflections, bubbles and foam, motion blur during pouring, lighting drift, white balance
+  and exposure, video-compression artefacts, and occlusion by the clamp. Compare like with
+  like: same stage, same phase (early/mid/end) and same fill level. The settled end-of-stage
+  image is usually the most trustworthy.
+- Colour measurement: CIELAB L* is lightness, a* green to red, b* blue to yellow. DeltaE76 is the
+  distance between two Lab colours; around 1 is barely visible, and larger values are
+  increasingly obvious. MAD and IQR describe how uneven the colour is inside the measured
+  region. A large spread can mean incomplete mixing, layering or a measurement problem.
 
-Confidence at or above 0.9 requires every stage to be clear_consistent and the image evidence
-to agree. If any stage is weak, low, or conflicting, confidence must be at most 0.8. Below 0.6 must use
-insufficient_evidence. Cite supplied bundle IDs only. Write the explanation as 2 to 4 plain
-operator sentences. Do not add unsupported causes or process advice."""
+The bundle also includes a deterministic rule's result, computed from the same Lab values.
+Treat it as one separate, equal-weight source. Agree or disagree based on your own reading of
+the images and the physics, and say why.
+
+Be honest about uncertainty: if the images don't let you tell, say insufficient_evidence.
+Don't invent measurements, causes you can't support, simulator internals or operator
+actions. Cite only image and evidence IDs that are in the bundle."""
 RESPONSE_FIELD_ORDER = (
-    "observations", "per_stage_comparison", "disposition",
-    "disposition_confidence", "explanation", "evidence_citations",
-    "image_citations",
+    "stages", "disposition", "confidence", "agrees_with_deterministic",
+    "why_agree_or_disagree", "physics_used", "explanation",
+    "evidence_citations", "image_citations",
 )
 RESPONSE_SCHEMA = {
     "type": "object", "additionalProperties": False,
     "required": list(RESPONSE_FIELD_ORDER),
     "properties": {
-        "observations": {
-            "type": "array", "minItems": 1,
-            "items": {
-                "type": "object", "additionalProperties": False,
-                "required": ["stage_id", "visual_assessment"],
-                "properties": {
-                    "stage_id": {"type": "string", "minLength": 1},
-                    "visual_assessment": {"enum": list(STAGE_RELIABILITY)},
-                },
-            },
-        },
-        "per_stage_comparison": {
+        "stages": {
             "type": "array", "minItems": 1,
             "items": {
                 "type": "object", "additionalProperties": False,
                 "required": [
-                    "stage_id", "phase_and_fill_match", "vial1_vs_vial2",
-                    "vial1_vs_vial3", "delta_e76_vial2", "delta_e76_vial3",
-                    "deterministic_stage_disposition",
-                    "stream_tank_consistency",
-                    "previous_recipe_direction", "reliability", "bundle_ids",
+                    "stage_id", "what_i_see", "physical_reasoning",
+                    "vial1_vs_references", "image_quality", "cited_image_ids",
                 ],
                 "properties": {
                     "stage_id": {"type": "string", "minLength": 1},
-                    "phase_and_fill_match": {"enum": list(PHASE_AND_FILL_MATCH)},
-                    "vial1_vs_vial2": {"enum": list(REFERENCE_RELATIONS)},
-                    "vial1_vs_vial3": {"enum": list(REFERENCE_RELATIONS)},
-                    "delta_e76_vial2": {"type": "number", "minimum": 0.0},
-                    "delta_e76_vial3": {"type": "number", "minimum": 0.0},
-                    "deterministic_stage_disposition": {
-                        "enum": sorted(DISPOSITIONS),
+                    "what_i_see": {
+                        "type": "string", "minLength": 1, "maxLength": 600,
                     },
-                    "stream_tank_consistency": {
-                        "enum": list(STREAM_TANK_CONSISTENCY),
+                    "physical_reasoning": {
+                        "type": "string", "minLength": 1, "maxLength": 600,
                     },
-                    "previous_recipe_direction": {
-                        "enum": list(PREVIOUS_RECIPE_DIRECTIONS),
+                    "vial1_vs_references": {
+                        "enum": [
+                            "same", "slightly_different", "clearly_different",
+                            "cannot_tell",
+                        ],
                     },
-                    "reliability": {
-                        "enum": list(STAGE_RELIABILITY),
-                    },
-                    "bundle_ids": {
-                        "type": "array", "minItems": 1,
-                        "items": {"type": "string", "minLength": 1},
+                    "image_quality": {"enum": ["good", "limited", "poor"]},
+                    "cited_image_ids": {
+                        "type": "array", "items": {"type": "string"},
                     },
                 },
             },
         },
         "disposition": {"enum": sorted(DISPOSITIONS)},
-        "disposition_confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "explanation": {"type": "string", "minLength": 1},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "agrees_with_deterministic": {"enum": ["yes", "no", "partly"]},
+        "why_agree_or_disagree": {
+            "type": "string", "minLength": 1, "maxLength": 600,
+        },
+        "physics_used": {"type": "array", "items": {"type": "string"}},
+        "explanation": {
+            "type": "string", "minLength": 1, "maxLength": 400,
+        },
         "evidence_citations": {"type": "array", "items": {"type": "string"}},
         "image_citations": {"type": "array", "items": {"type": "string"}},
     },
 }
-USER_PROMPT_TEMPLATE = """Apply the domain contract to the evidence bundle below. Follow its
-sequential mixture order, compare matching stage/phase/fill evidence, use MAD/IQR to qualify
-trust, check tracker measured-versus-expected agreement and bind stream-tank consistency to
-each stage's exact tank_cluster_consistent boolean. Compare vial 1 with both flushed references.
-For previous-recipe direction, obey previous_recipe_direction_support: when unavailable, emit
-not_assessable for every stage and do not mention the previous recipe in observations or the
-explanation except to state truthfully that support is unavailable, direction is not assessable,
-or no directional claim is made through the closed not_assessable field. Each stage
-comparison's bundle_ids may contain only IDs
-belonging to that exact stage. You MUST copy the target evidence's exact preclassified
-vial1_vs_vial2 and vial1_vs_vial3 strings and MUST NOT recalculate those relations. The bundle
-producer already applied the exact 1.0/2.0 dE76 rules. Copy the bundle's deterministic stage
-disposition and exact delta_e76_vial2 and delta_e76_vial3 values. These structured outcomes are authoritative. Emit exactly one observation per
-stage in stage order. Copy that stage's reliability into visual_assessment. Observations contain
-no free text and no citations. Keep stage-local provenance in each per_stage_comparison's
-bundle_ids and put overall provenance only in evidence_citations and image_citations. Write the
-explanation in your own words as 2 to 4 plain operator sentences. It may mention DeltaE only:
-copy its exact structured value and do not restate or invent numeric thresholds. Do not
-claim hidden simulator state, residue amounts, a cause, or an operator action. The explanation
-must agree with the structured disposition. When signals conflict or support is weak, return
-insufficient_evidence.
-Set each stage reliability to clear_consistent only if its image evidence is clear and agrees;
-otherwise use weak, low, or conflicting. If ANY stage is not clear_consistent,
-disposition_confidence MUST be at most 0.8. Confidence at or above 0.9 is allowed only if EVERY
-stage is clear_consistent and the image evidence agrees.
-Cite bundle IDs only and give no unsupported cause or process advice.
+USER_PROMPT_TEMPLATE = """Inspect vial 1 against vials 2 and 3, stage by stage. For each stage, first describe what you
+see in the early, mid and end images, then reason about what physically explains it, then judge
+vial 1. After all stages, give your overall disposition and confidence, say whether you agree
+with the deterministic rule and why, and write a short explanation for an operator.
+Return JSON matching the schema below.
 Response schema (property order is required):
 {schema}
 Evidence bundle:
@@ -261,30 +228,36 @@ _PROSE_CITATION = re.compile(
     r"|v4-[A-Za-z0-9_.:-]+)\b",
     re.IGNORECASE,
 )
+_NUMERIC_LITERAL = r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
 _DELTA_CLAIM = re.compile(
-    r"\b(?:delta\s*e(?:76)?|d\s*e\s*76)\b"
-    r"(?:\s+(?:value|of|is|was|equals?))?\s*[:=]?\s*(-?\d+(?:\.\d+)?)",
+    r"\b(?:delta\s*e(?:76)?|d\s*e\s*76|Δ\s*e(?:76)?)\b"
+    r"(?:\s+(?:(?:value\s+)?(?:of\s+)?(?:is|was|equals?)|value|of))?"
+    r"(?:\s+(?:approximately|approx(?:imately)?\.?|about|roughly|nearly))?"
+    rf"\s*[:=]?\s*({_NUMERIC_LITERAL})(?!\w|\.\d)",
     re.IGNORECASE,
 )
 _CONFIDENCE_CLAIM = re.compile(
-    r"\bconfidence\b(?:\s+(?:value|of|is|was|equals?))?\s*[:=]?\s*"
-    r"(-?\d+(?:\.\d+)?)",
-    re.IGNORECASE,
-)
-_THRESHOLD_COMPARISON = re.compile(
-    r"(?<![A-Za-z0-9_.-])(-?\d+(?:\.\d+)?)\s+(?:is\s+)?"
-    r"(above|below|over|under|greater\s+than|less\s+than)\s+"
-    r"(?:the\s+)?(?:threshold(?:\s+(?:of|at|equals?))?\s*)?"
-    r"(-?\d+(?:\.\d+)?)?",
+    r"\bconfidence\b"
+    r"(?:\s+(?:(?:value\s+)?(?:of\s+)?(?:is|was|equals?)|value|of))?"
+    r"(?:\s+(?:approximately|approx(?:imately)?\.?|about|roughly|nearly))?"
+    rf"\s*[:=]?\s*({_NUMERIC_LITERAL})(?!\w|\.\d)",
     re.IGNORECASE,
 )
 _HIDDEN_SIMULATOR = re.compile(
-    r"\b(?:simulator|simulation\s+(?:state|truth)|particles?|semantic[_ -]?mask|"
-    r"oracle|palette|expected[_ -]?lab|beer[_ -]?lambert|absorbance|test[_ -]?label)\b",
+    r"\b(?:simulator|simulation\s+(?:state|truth|outputs?|results?|internals?|data|metadata)|"
+    r"particles?|semantic[_ -]?mask|"
+    r"oracle|palette|expected[_ -]?lab|test[_ -]?label)\b",
     re.IGNORECASE,
 )
+_PHYSICAL_CAUSE = (
+    r"(?:carryover|stratification|layering|residu(?:e|al)|dead\s+volume|"
+    r"glare|reflection|bubbles?|foam|path\s+length|mixing|diffusion|"
+    r"refraction|lensing|lighting|white\s+balance|exposure|compression)"
+)
 _CAUSE_CLAIM = re.compile(
-    r"\b(?:caused|causes|because|due\s+to|results?\s+from|attribut(?:e[ds]?|able)\s+to)\b",
+    rf"\b(?:caused|causes|because|due\s+to|results?\s+from|"
+    rf"stems?\s+from|explains?|attribut(?:e[ds]?|able)\s+to)\b|"
+    rf"\b(?:is|are|was|were|be)\s+(?:an?\s+|the\s+)?{_PHYSICAL_CAUSE}\b",
     re.IGNORECASE,
 )
 _EVIDENCE_UNAVAILABLE_EXPLANATION = re.compile(
@@ -295,20 +268,12 @@ _EVIDENCE_UNAVAILABLE_EXPLANATION = re.compile(
     re.IGNORECASE,
 )
 _ACTION = r"(?:adjust|calibrate|change|clean|collect|discard|divert|drain|flush|hold|inspect|keep|mix|operate|purge|rerun|stop|start)"
+_ACTION_PARTICIPLE = r"(?:adjusted|calibrated|changed|cleaned|collected|discarded|diverted|drained|flushed|held|inspected|kept|mixed|operated|purged|rerun|stopped|started)"
 _OPERATOR_ACTION = re.compile(
-    rf"(?:\b(?:should|must|needs?\s+to|recommend(?:ed)?|please)\b.{{0,60}}\b{_ACTION}\b|"
+    rf"(?:\b(?:should|must|needs?\s+to|recommend(?:ed)?|please)\b.{{0,60}}\b(?:{_ACTION}|{_ACTION_PARTICIPLE})\b|"
     rf"\brequires?\s+(?:an?\s+)?adjustment\b|"
     rf"(?:^|[.!?]\s*)(?:please\s+)?{_ACTION}\b"
     rf"(?=\s+(?:the|this|that|vial|line|batch|process|system|more|additional|now)\b))",
-    re.IGNORECASE,
-)
-_KEEP_QUALITY_CLAIM = re.compile(
-    r"\bwell[- ]controlled\b.{0,40}\bfree\s+of\s+defects?\b",
-    re.IGNORECASE,
-)
-_DISCARD_QUALITY_CLAIM = re.compile(
-    r"\b(?:poorly[- ]controlled|not\s+well[- ]controlled)\b.{0,40}"
-    r"\b(?:has\s+|with\s+|showing\s+)?defects?\b",
     re.IGNORECASE,
 )
 _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT = {
@@ -890,379 +855,289 @@ def _deterministic_explanation(disposition: object) -> str:
     )
 
 
-def _prose_guard_failures(
-    explanation: object, *, disposition: object,
-    confidence: object, comparisons: object, allowed_ids: set[object],
-) -> list[str]:
-    """Check only claims that can contradict or escape the supplied bundle."""
+_V2_STAGE_FIELDS = (
+    "stage_id", "what_i_see", "physical_reasoning",
+    "vial1_vs_references", "image_quality", "cited_image_ids",
+)
+_V2_REFERENCE_COMPARISONS = (
+    "same", "slightly_different", "clearly_different", "cannot_tell",
+)
+_V2_IMAGE_QUALITY = ("good", "limited", "poor")
+_V2_AGREEMENT = ("yes", "no", "partly")
+_RESIDUE_TERM = r"(?:residu(?:e|al)|dead\s+volume|hold[- ]?up)"
+_RESIDUE_QUANTITY = (
+    rf"{_NUMERIC_LITERAL}\s*(?:%|uL|µL|μL|mL|millilit(?:er|re)s?|"
+    r"L|lit(?:er|re)s?)(?!\w)"
+)
+_RESIDUE_AMOUNT = re.compile(
+    rf"(?:\b{_RESIDUE_TERM}\b.{{0,40}}{_RESIDUE_QUANTITY}|"
+    rf"{_RESIDUE_QUANTITY}.{{0,40}}\b{_RESIDUE_TERM}\b)",
+    re.IGNORECASE,
+)
 
-    if not isinstance(explanation, str) or not explanation.strip():
-        return ["explanation_missing"]
+
+def _v2_claim_failures(
+    text: str, *, disposition: object, confidence: object,
+    allowed_ids: set[object], allowed_delta_e76: Sequence[object],
+) -> list[str]:
     failures: list[str] = []
-    cited = _PROSE_CITATION.findall(explanation)
-    allowed_text = {item.casefold() for item in allowed_ids if isinstance(item, str)}
-    if any(item.casefold() not in allowed_text for item in cited):
+    allowed_text = {
+        item.casefold() for item in allowed_ids if isinstance(item, str)
+    }
+    if any(
+        item.casefold() not in allowed_text
+        for item in _PROSE_CITATION.findall(text)
+    ):
         failures.append("citation_outside_bundle")
 
-    comparison_rows = [
-        row for row in comparisons if isinstance(row, Mapping)
-    ] if isinstance(comparisons, list) else []
-    for sentence in re.split(r"(?<=[.!?])\s+", explanation):
-        selected = [
-            row for ordinal, row in enumerate(comparison_rows, 1)
-            if (
-                re.search(rf"(?<![A-Za-z0-9]){re.escape(str(row.get('stage_id')))}(?![A-Za-z0-9])", sentence, re.I)
-                or re.search(rf"\bstage[\s_-]*{ordinal}\b", sentence, re.I)
+    expected_delta = []
+    for item in allowed_delta_e76:
+        try:
+            expected_delta.append(_finite(item, "bundle delta E76", 0.0))
+        except ContractError:
+            continue
+    for claimed in _DELTA_CLAIM.findall(text):
+        try:
+            numeric = float(claimed)
+        except ValueError:
+            failures.append("numeric_claim_contradiction")
+            continue
+        if not any(
+            math.isclose(
+                numeric, expected, rel_tol=0.0,
+                abs_tol=DELTA_E76_SERIALIZATION_ABS_TOLERANCE,
             )
-        ]
-        relevant = selected or comparison_rows
-        delta_claims = _DELTA_CLAIM.findall(sentence)
-        for claimed in delta_claims:
-            fields = ("delta_e76_vial2", "delta_e76_vial3")
-            if re.search(r"\bvial[\s_-]*2\b", sentence, re.I):
-                fields = ("delta_e76_vial2",)
-            elif re.search(r"\bvial[\s_-]*3\b", sentence, re.I):
-                fields = ("delta_e76_vial3",)
-            expected = {
-                str(row.get(field)) for row in relevant for field in fields
-                if isinstance(row.get(field), (int, float))
-                and not isinstance(row.get(field), bool)
-            }
-            try:
-                claim_matches = any(float(claimed) == float(item) for item in expected)
-            except ValueError:
-                claim_matches = False
-            if not claim_matches:
-                failures.append("numeric_claim_contradiction")
+            for expected in expected_delta
+        ):
+            failures.append("numeric_claim_contradiction")
 
-        for left, relation, right in _THRESHOLD_COMPARISON.findall(sentence):
-            if right:
-                left_value, right_value = float(left), float(right)
-                below = relation.casefold() in {"below", "under", "less than"}
-                if (below and left_value >= right_value) or (
-                    not below and left_value <= right_value
-                ):
-                    failures.append("threshold_claim_contradiction")
-            else:
-                matching_relations = {
-                    row.get(field)
-                    for row in relevant
-                    for field in ("vial1_vs_vial2", "vial1_vs_vial3")
-                    if str(row.get("delta_e76_vial2" if field.endswith("vial2") else "delta_e76_vial3")) == left
-                }
-                below = relation.casefold() in {"below", "under", "less than"}
-                if (below and matching_relations == {"discard_range"}) or (
-                    not below and matching_relations == {"keep_range"}
-                ):
-                    failures.append("threshold_claim_contradiction")
-
-        relation_claims = {
-            match.casefold().replace(" ", "_")
-            for match in re.findall(
-                r"\b(keep[_ ]range|deadband|discard[_ ]range)\b", sentence, re.I,
-            )
-        }
-        available_relations = {
-            str(row.get(field)) for row in relevant
-            for field in ("vial1_vs_vial2", "vial1_vs_vial3")
-        }
-        if relation_claims and not relation_claims <= available_relations:
-            failures.append("threshold_claim_contradiction")
-
-    confidence_claims = _CONFIDENCE_CLAIM.findall(explanation)
+    confidence_claims = _CONFIDENCE_CLAIM.findall(text)
     if confidence_claims and (
-        not isinstance(confidence, (int, float)) or isinstance(confidence, bool)
+        not isinstance(confidence, (int, float))
+        or isinstance(confidence, bool)
         or any(float(claim) != float(confidence) for claim in confidence_claims)
     ):
         failures.append("numeric_claim_contradiction")
 
-    if _HIDDEN_SIMULATOR.search(explanation):
+    if _HIDDEN_SIMULATOR.search(text):
         failures.append("hidden_simulator_state_claim")
-    if re.search(
-        r"(?:\bresidue\b.{0,40}\b\d+(?:\.\d+)?\b|\b\d+(?:\.\d+)?\s*(?:mL|millilit(?:er|re)s?)\b.{0,40}\bresidue\b)",
-        explanation, re.IGNORECASE,
-    ):
+    if _RESIDUE_AMOUNT.search(text):
         failures.append("residue_amount_claim")
-    cause_checked = _EVIDENCE_UNAVAILABLE_EXPLANATION.sub("", explanation)
-    if _CAUSE_CLAIM.search(cause_checked):
-        failures.append("cause_claim")
-    if _OPERATOR_ACTION.search(explanation):
+    if _OPERATOR_ACTION.search(text):
         failures.append("operator_action_claim")
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        cause_checked = _EVIDENCE_UNAVAILABLE_EXPLANATION.sub("", sentence)
+        for claim in _CAUSE_CLAIM.finditer(cause_checked):
+            prefix = cause_checked[max(0, claim.start() - 64):claim.start()]
+            if re.search(
+                r"\b(?:could|may|might)"
+                r"(?:\s+(?:be|not|[A-Za-z]+ly)){0,3}\s*$",
+                prefix,
+                re.IGNORECASE,
+            ) is None:
+                failures.append("asserted_cause_claim")
+                break
 
     claimed_dispositions = {
         match.casefold().replace(" ", "_")
         for match in re.findall(
-            r"\b(?:structured\s+)?(?:disposition|result|decision)\s+(?:is|was|supports?)\s+"
+            r"\b(?:structured\s+)?(?:disposition|result|decision)\s+"
+            r"(?:is|was|supports?)\s+"
             r"(keep|discard|insufficient(?:_|\s+)evidence)\b",
-            explanation, re.IGNORECASE,
+            text, re.IGNORECASE,
         )
     }
     claimed_dispositions.update(
         match.casefold().replace(" ", "_")
         for match in re.findall(
-            r"\b(?:evidence|comparison|result|decision)\s+"
+            r"\b(?:evidence|comparison|images?|judgment)\s+"
             r"(?:supports?|indicates?|shows?)\s+"
             r"(keep|discard|insufficient(?:_|\s+)evidence)\b",
-            explanation, re.IGNORECASE,
+            text, re.IGNORECASE,
+        )
+    )
+    claimed_dispositions.update(
+        {"kept": "keep", "discarded": "discard"}[match.casefold()]
+        for match in re.findall(
+            r"\bvial\s*1\s+(?:should|must|needs?\s+to)\s+be\s+"
+            r"(kept|discarded)\b",
+            text, re.IGNORECASE,
         )
     )
     claimed_dispositions.update(
         match.casefold().replace(" ", "_")
         for match in re.findall(
-            r"\b(keep|discard|insufficient(?:_|\s+)evidence)\s+is\s+"
-            r"(?:the\s+)?(?:structured\s+)?(?:disposition|result|decision)\b",
-            explanation, re.IGNORECASE,
+            r"\bvial\s*1\s+(?:is|was)\s+(?:an?\s+)?"
+            r"(keep|discard|insufficient(?:_|\s+)evidence)\b",
+            text, re.IGNORECASE,
+        )
+    )
+    claimed_dispositions.update(
+        match.casefold().replace(" ", "_")
+        for match in re.findall(
+            r"\boverall\s*[,;:]?\s*"
+            r"(keep|discard|insufficient(?:_|\s+)evidence)\b",
+            text, re.IGNORECASE,
         )
     )
     if (
-        disposition in DISPOSITIONS
+        isinstance(disposition, str)
+        and disposition in DISPOSITIONS
         and claimed_dispositions
         and claimed_dispositions != {str(disposition)}
-    ):
-        failures.append("disposition_contradiction")
-    if (
-        (_KEEP_QUALITY_CLAIM.search(explanation) and disposition != "keep")
-        or (_DISCARD_QUALITY_CLAIM.search(explanation) and disposition != "discard")
     ):
         failures.append("disposition_contradiction")
     return list(dict.fromkeys(failures))
 
 
 def guard_model_response(value: object, bundle: object) -> dict[str, Any]:
-    base = {"vote": None, "discard_score": None, "guard_status": "excluded", "guard_reasons": []}
+    """Admit only structurally complete v2 judgments without factual errors."""
+
+    base = {
+        "vote": None, "discard_score": None,
+        "guard_status": "excluded", "guard_reasons": [],
+    }
     if not isinstance(value, Mapping) or not isinstance(bundle, Mapping):
         return {**base, "guard_reasons": ["response_or_bundle_type_invalid"]}
-    reasons = []
+
+    reasons: list[str] = []
     if tuple(value) != RESPONSE_FIELD_ORDER:
         reasons.append("response_fields_or_order_invalid")
-    observations = value.get("observations")
-    comparisons = value.get("per_stage_comparison")
+
+    supported_stage_ids = [
+        row.get("stage_id") for row in bundle.get("stages", [])
+        if isinstance(row, Mapping)
+    ]
     allowed_evidence = {
-        row.get("evidence_id") for row in bundle.get("deterministic_evidence", [])
+        row.get("evidence_id")
+        for row in bundle.get("deterministic_evidence", [])
         if isinstance(row, Mapping)
     }
     allowed_images = {
         row.get("image_id") for row in bundle.get("images", [])
         if isinstance(row, Mapping)
     }
-    supported_stage_ids = [
-        row.get("stage_id") for row in bundle.get("stages", [])
-        if isinstance(row, Mapping)
+    allowed_ids = allowed_evidence | allowed_images
+    all_delta_e76 = [
+        row.get(field)
+        for row in bundle.get("deterministic_evidence", [])
+        if isinstance(row, Mapping) and row.get("vial_position") == 1
+        for field in ("delta_e76_vial2", "delta_e76_vial3")
+        if field in row
     ]
-    observation_fields = ("stage_id", "visual_assessment")
-    if not isinstance(observations, list) or any(
-        not isinstance(item, Mapping) or tuple(item) != observation_fields
-        for item in observations
+
+    stages = value.get("stages")
+    if not isinstance(stages, list) or any(
+        not isinstance(row, Mapping) or tuple(row) != _V2_STAGE_FIELDS
+        for row in stages
     ):
-        reasons.append("observations_invalid")
+        reasons.append("stages_invalid")
     elif (
-        len(observations) != len(supported_stage_ids)
-        or [item["stage_id"] for item in observations] != supported_stage_ids
-    ):
-        reasons.append("observation_coverage_invalid")
-    else:
-        for item in observations:
-            if item["visual_assessment"] not in STAGE_RELIABILITY:
-                reasons.append("observation_visual_assessment_invalid")
-                break
-    comparison_fields = (
-        "stage_id", "phase_and_fill_match", "vial1_vs_vial2", "vial1_vs_vial3",
-        "delta_e76_vial2", "delta_e76_vial3",
-        "deterministic_stage_disposition", "stream_tank_consistency",
-        "previous_recipe_direction", "reliability", "bundle_ids",
-    )
-    direction_support = bundle.get("previous_recipe_direction_support")
-    if direction_support != _NO_PREVIOUS_RECIPE_DIRECTION_SUPPORT:
-        reasons.append("previous_recipe_direction_support_invalid")
-    if not isinstance(comparisons, list) or any(
-        not isinstance(row, Mapping) or tuple(row) != comparison_fields
-        for row in comparisons
-    ):
-        reasons.append("per_stage_comparison_invalid")
-    elif (
-        len(comparisons) != len(supported_stage_ids)
-        or [row["stage_id"] for row in comparisons] != supported_stage_ids
+        [row["stage_id"] for row in stages] != supported_stage_ids
         or len(set(supported_stage_ids)) != len(supported_stage_ids)
     ):
-        reasons.append("per_stage_comparison_coverage_invalid")
+        reasons.append("stage_coverage_invalid")
     else:
-        for row in comparisons:
+        for row in stages:
             stage_id = row["stage_id"]
-            if row["phase_and_fill_match"] not in PHASE_AND_FILL_MATCH:
-                reasons.append("phase_and_fill_match_invalid")
-                break
-            if any(row[field] not in REFERENCE_RELATIONS for field in (
-                "vial1_vs_vial2", "vial1_vs_vial3",
-            )):
-                reasons.append("per_stage_reference_relation_invalid")
-                break
-            if row["stream_tank_consistency"] not in STREAM_TANK_CONSISTENCY:
-                reasons.append("stream_tank_consistency_invalid")
-                break
-            if row["previous_recipe_direction"] not in PREVIOUS_RECIPE_DIRECTIONS:
-                reasons.append("previous_recipe_direction_invalid")
-                break
-            if (
-                not isinstance(row["deterministic_stage_disposition"], str)
-                or row["deterministic_stage_disposition"] not in DISPOSITIONS
-            ):
-                reasons.append("deterministic_stage_disposition_invalid")
-                break
-            if row["reliability"] not in STAGE_RELIABILITY:
-                reasons.append("per_stage_comparison_reliability_invalid")
-                break
-            target_rows = [
-                evidence for evidence in bundle.get("deterministic_evidence", [])
-                if isinstance(evidence, Mapping)
-                and evidence.get("stage_id") == stage_id
-                and evidence.get("vial_position") == 1
-            ]
-            prompt_stages = [
-                stage for stage in bundle.get("stages", [])
-                if isinstance(stage, Mapping) and stage.get("stage_id") == stage_id
-            ]
-            if (
-                len(prompt_stages) != 1
-                or type(prompt_stages[0].get("tank_cluster_consistent")) is not bool
-                or row["stream_tank_consistency"] != (
-                    "consistent"
-                    if prompt_stages[0].get("tank_cluster_consistent") is True
-                    else "inconsistent"
-                )
-            ):
-                reasons.append("stream_tank_consistency_mismatch")
-            if row["previous_recipe_direction"] != "not_assessable":
-                reasons.append("previous_recipe_direction_unsupported")
-            try:
-                expected_relations = (
-                    _reference_relation(target_rows[0]["delta_e76_vial2"]),
-                    _reference_relation(target_rows[0]["delta_e76_vial3"]),
-                )
-            except (ContractError, IndexError, KeyError):
-                reasons.append("per_stage_reference_measurement_invalid")
-                break
-            prompt_relations = (
-                target_rows[0].get("vial1_vs_vial2"),
-                target_rows[0].get("vial1_vs_vial3"),
-            )
-            if prompt_relations != expected_relations:
-                reasons.append("prompt_reference_relation_mismatch")
-            if (
-                row["vial1_vs_vial2"], row["vial1_vs_vial3"]
-            ) != expected_relations:
-                reasons.append("per_stage_reference_relation_mismatch")
-            try:
-                exact_distances = (
-                    _finite(row["delta_e76_vial2"], "response delta E76", 0.0),
-                    _finite(row["delta_e76_vial3"], "response delta E76", 0.0),
-                )
-                bundle_distances = (
-                    _finite(target_rows[0]["delta_e76_vial2"], "bundle delta E76", 0.0),
-                    _finite(target_rows[0]["delta_e76_vial3"], "bundle delta E76", 0.0),
-                )
-                distances_within_tolerance = not any(
-                    not math.isclose(
-                        actual, expected, rel_tol=0.0,
-                        abs_tol=DELTA_E76_SERIALIZATION_ABS_TOLERANCE,
-                    )
-                    for actual, expected in zip(
-                        exact_distances, bundle_distances, strict=True
-                    )
-                )
-                if not distances_within_tolerance:
-                    reasons.append("per_stage_delta_e76_mismatch")
-                elif tuple(
-                    _reference_relation(distance) for distance in exact_distances
-                ) != expected_relations:
-                    reasons.append("per_stage_reference_relation_mismatch")
-            except (ContractError, IndexError, KeyError):
-                reasons.append("per_stage_delta_e76_invalid")
-            if (
-                len(target_rows) != 1
-                or row["deterministic_stage_disposition"]
-                != target_rows[0].get("deterministic_disposition")
-            ):
-                reasons.append("deterministic_stage_disposition_mismatch")
-            stage_ids = {
-                evidence.get("evidence_id")
-                for evidence in bundle.get("deterministic_evidence", [])
-                if isinstance(evidence, Mapping) and evidence.get("stage_id") == stage_id
-            } | {
-                image.get("image_id")
-                for image in bundle.get("images", [])
+            for field in ("what_i_see", "physical_reasoning"):
+                text = row[field]
+                if not isinstance(text, str) or not text or len(text) > 600:
+                    reasons.append(f"{field}_invalid")
+            if row["vial1_vs_references"] not in _V2_REFERENCE_COMPARISONS:
+                reasons.append("vial1_vs_references_invalid")
+            if row["image_quality"] not in _V2_IMAGE_QUALITY:
+                reasons.append("image_quality_invalid")
+            stage_image_ids = {
+                image.get("image_id") for image in bundle.get("images", [])
                 if isinstance(image, Mapping) and image.get("stage_id") == stage_id
             }
-            cited = row["bundle_ids"]
-            if (
-                not isinstance(cited, list) or not cited
-                or any(not isinstance(item, str) or item not in stage_ids for item in cited)
+            cited = row["cited_image_ids"]
+            if not isinstance(cited, list) or any(
+                not isinstance(item, str) or item not in stage_image_ids
+                for item in cited
             ):
-                reasons.append("per_stage_comparison_bundle_ids_invalid")
-                break
-    if (
-        isinstance(observations, list)
-        and isinstance(comparisons, list)
-        and len(observations) == len(comparisons) == len(supported_stage_ids)
-    ):
-        for observation, comparison in zip(observations, comparisons, strict=True):
-            if (
-                not isinstance(observation, Mapping)
-                or not isinstance(comparison, Mapping)
-                or observation.get("stage_id") != comparison.get("stage_id")
-                or observation.get("visual_assessment") != comparison.get("reliability")
-            ):
-                reasons.append("observation_comparison_binding_mismatch")
-                break
-    disposition, confidence = value.get("disposition"), value.get("disposition_confidence")
-    if disposition not in DISPOSITIONS: reasons.append("disposition_invalid")
+                reasons.append("stage_image_citations_invalid")
+
+    disposition = value.get("disposition")
+    if not isinstance(disposition, str) or disposition not in DISPOSITIONS:
+        reasons.append("disposition_invalid")
+    confidence = value.get("confidence")
     try:
-        confidence = _finite(confidence, "disposition confidence", 0.0)
-        if confidence > 1: reasons.append("disposition_confidence_out_of_range")
-        if confidence < 0.6 and disposition != "insufficient_evidence":
-            reasons.append("below_0_6_requires_insufficient_evidence")
-        if (
-            confidence > 0.8 and disposition != "insufficient_evidence"
-            and isinstance(comparisons, list) and len(comparisons) < 2
-        ):
-            reasons.append("single_stage_confidence_above_0_8")
-        if confidence > 0.8 and isinstance(comparisons, list) and any(
-            not isinstance(row, Mapping)
-            or row.get("reliability") != "clear_consistent"
-            for row in comparisons
-        ):
-            reasons.append("non_clear_stage_confidence_above_0_8")
-    except ContractError: reasons.append("disposition_confidence_invalid")
-    for field, allowed_ids in (("evidence_citations", allowed_evidence), ("image_citations", allowed_images)):
+        confidence = _finite(confidence, "confidence", 0.0)
+        if confidence > 1.0:
+            reasons.append("confidence_out_of_range")
+    except ContractError:
+        reasons.append("confidence_invalid")
+    if value.get("agrees_with_deterministic") not in _V2_AGREEMENT:
+        reasons.append("agrees_with_deterministic_invalid")
+
+    for field, maximum in (
+        ("why_agree_or_disagree", 600), ("explanation", 400),
+    ):
+        text = value.get(field)
+        if not isinstance(text, str) or not text or len(text) > maximum:
+            reasons.append(f"{field}_invalid")
+    physics_used = value.get("physics_used")
+    if not isinstance(physics_used, list) or any(
+        not isinstance(item, str) for item in physics_used
+    ):
+        reasons.append("physics_used_invalid")
+
+    for field, allowed in (
+        ("evidence_citations", allowed_evidence),
+        ("image_citations", allowed_images),
+    ):
         citations = value.get(field)
-        if not isinstance(citations, list) or not citations or any(not isinstance(item, str) or item not in allowed_ids for item in citations): reasons.append(f"{field}_invalid")
-    explanation = value.get("explanation")
-    explanation_reasons = _prose_guard_failures(
-        explanation, disposition=disposition, confidence=confidence,
-        comparisons=comparisons,
-        allowed_ids=allowed_evidence | allowed_images,
-    )
-    explanation_status = (
-        "model_written" if not explanation_reasons else "deterministic_fallback"
-    )
+        if not isinstance(citations, list) or any(
+            not isinstance(item, str) or item not in allowed
+            for item in citations
+        ):
+            reasons.append(f"{field}_invalid")
+
+    texts: list[tuple[str, Sequence[object]]] = []
+    if isinstance(stages, list):
+        for row in stages:
+            if not isinstance(row, Mapping):
+                continue
+            stage_delta = [
+                evidence.get(field)
+                for evidence in bundle.get("deterministic_evidence", [])
+                if isinstance(evidence, Mapping)
+                and evidence.get("vial_position") == 1
+                and evidence.get("stage_id") == row.get("stage_id")
+                for field in ("delta_e76_vial2", "delta_e76_vial3")
+                if field in evidence
+            ]
+            for field in ("what_i_see", "physical_reasoning"):
+                if isinstance(row.get(field), str):
+                    texts.append((row[field], stage_delta))
+    for field in ("why_agree_or_disagree", "explanation"):
+        if isinstance(value.get(field), str):
+            texts.append((value[field], all_delta_e76))
+    if isinstance(physics_used, list):
+        texts.extend(
+            (item, all_delta_e76) for item in physics_used
+            if isinstance(item, str)
+        )
+    for text, allowed_delta in texts:
+        reasons.extend(_v2_claim_failures(
+            text, disposition=disposition, confidence=confidence,
+            allowed_ids=allowed_ids, allowed_delta_e76=allowed_delta,
+        ))
+
     result = {
         **dict(value), **base,
-        "model_explanation": explanation,
-        "explanation": (
-            explanation if not explanation_reasons
-            else _deterministic_explanation(disposition)
-        ),
-        "explanation_status": explanation_status,
-        "explanation_guard_reasons": explanation_reasons,
         "guard_reasons": list(dict.fromkeys(reasons)),
     }
     if not reasons:
         result["guard_status"] = "admitted"
-        discard_score = (
+        score = (
             None if disposition == "insufficient_evidence"
             else confidence if disposition == "discard" else 1.0 - confidence
         )
-        result["discard_score"] = discard_score
-        result["vote"] = discard_score
+        result["discard_score"] = score
+        result["vote"] = score
     return result
 
 
@@ -1334,7 +1209,7 @@ def aggregate_decision(bundle: object, model_attempts: object) -> dict[str, Any]
     ]
     mean = sum(votes) / len(votes) if votes else None
     final = "insufficient_evidence" if len(votes) < 2 else ("discard" if mean >= 0.5 else "keep")
-    return {"schema_version": "wp7-vlm-aggregation-receipt-v1", "aggregation": dict(AGGREGATION), "sources": sources, "valid_source_count": len(votes), "mean_discard_score": mean, "final_disposition": final}
+    return {"schema_version": "wp7-vlm-aggregation-receipt-v2", "aggregation": dict(AGGREGATION), "sources": sources, "valid_source_count": len(votes), "mean_discard_score": mean, "final_disposition": final}
 
 
 def _runtime_telemetry(value: Mapping[str, object]) -> dict[str, object]:
@@ -1517,7 +1392,7 @@ def create_development_freeze(
     output = Path(path)
     if output.exists() or output.is_symlink(): raise ContractError("refusing to overwrite freeze")
     freeze = {
-        "schema_version": "wp7-vlm-development-freeze-v12", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v13", "development_only": True,
         "decision_source_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
@@ -1540,9 +1415,9 @@ def create_development_freeze(
         "tracker_validator_source_sha256": hashlib.sha256(
             (Path(__file__).resolve().parents[2] / "perception" / "tracker" / "fill_step_tracker.py").read_bytes()
         ).hexdigest(),
-        "prompt_id": "wp7-grounded-sequential-mixture-v9",
+        "prompt_id": "wp7-grounded-sequential-mixture-v10",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v7",
+        "response_schema_id": "wp7-vlm-reasoned-response-v8",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": dict(MODEL_REASONING_MODES),
@@ -1578,7 +1453,7 @@ def _validate_freeze(value: object) -> None:
     if set(value) != fields:
         raise ContractError("freeze fields are not closed")
     expected = {
-        "schema_version": "wp7-vlm-development-freeze-v12", "development_only": True,
+        "schema_version": "wp7-vlm-development-freeze-v13", "development_only": True,
         "deterministic_policy": {
             "config_sha256": DETERMINISTIC_CONFIG_SHA256,
             **DETERMINISTIC_POLICY,
@@ -1586,9 +1461,9 @@ def _validate_freeze(value: object) -> None:
         "generation_config": GENERATION_CONFIG,
         "tracker_schema_version": "wp7-camera-fill-step-receipt-v1",
         "tracker_claim_boundary": TRACKER_CLAIM_BOUNDARY,
-        "prompt_id": "wp7-grounded-sequential-mixture-v9",
+        "prompt_id": "wp7-grounded-sequential-mixture-v10",
         "prompt_sha256": _digest({"system": SYSTEM_PROMPT, "user_template": USER_PROMPT_TEMPLATE}),
-        "response_schema_id": "wp7-vlm-reasoned-response-v7",
+        "response_schema_id": "wp7-vlm-reasoned-response-v8",
         "response_schema_sha256": _digest(RESPONSE_SCHEMA),
         "parser_id": "model-specific-json-or-one-think-answer-v1",
         "reasoning_modes": MODEL_REASONING_MODES,
@@ -1976,15 +1851,14 @@ def _validate_attempt_receipt(
         raise ContractError("model attempt receipt is invalid")
     fields = {
         "schema_version", "artifact_type", "cohort_id", "binding", "prompt",
-        "images", "model", "invoke", "prerequisite_qwen_receipt_sha256",
-        "constrained_decoding", "determinism",
+        "images", "model", "invoke", "constrained_decoding", "determinism",
         "token_budget",
         "receipt_sha256",
     }
     if set(value) != fields:
         raise ContractError("model attempt receipt fields are not closed")
     if (
-        value.get("schema_version") != "wp7-vlm-model-attempt-receipt-v2"
+        value.get("schema_version") != "wp7-vlm-model-attempt-receipt-v3"
         or value.get("artifact_type") != "wp7_vlm_model_attempt_receipt"
         or value.get("cohort_id") != context.built.prompt_payload.get("cohort_id")
     ):
@@ -2070,12 +1944,6 @@ def _validate_attempt_receipt(
         or token_budget.get("model_context_limit") != projected_invoke.get("model_context_limit")
     ):
         raise ContractError("model attempt token-budget provenance differs")
-    prerequisite = value.get("prerequisite_qwen_receipt_sha256")
-    if model["repository"] == MODELS[0]["repository"]:
-        if prerequisite is not None:
-            raise ContractError("Qwen attempt must not have a prerequisite")
-    elif not isinstance(prerequisite, str) or _SHA.fullmatch(prerequisite) is None:
-        raise ContractError("non-Qwen attempt lacks its Qwen prerequisite binding")
     return dict(value)
 
 
@@ -2090,7 +1958,6 @@ def run_one_model_attempt_from_files(
     revision: str,
     snapshot_path: str | Path,
     output_path: str | Path,
-    prerequisite_qwen_receipt_path: str | Path | None = None,
     production: bool = False,
     runtime_loader: Any,
     runtime_invoker: Any,
@@ -2114,29 +1981,6 @@ def run_one_model_attempt_from_files(
     )
     if not policy.stock_runtime or policy.trust_remote_code:
         raise ContractError("runtime requires the stock trust_remote_code=False adapter")
-    qwen_repository = MODELS[0]["repository"]
-    prerequisite_sha = None
-    if repository != qwen_repository:
-        if prerequisite_qwen_receipt_path is None:
-            raise ContractError("Cosmos/Anomaly runtime requires a valid Qwen attempt first")
-        prerequisite_value, _ = _regular_json(
-            prerequisite_qwen_receipt_path, "Qwen prerequisite receipt"
-        )
-        prerequisite = _validate_attempt_receipt(prerequisite_value, context)
-        if prerequisite["model"]["repository"] != qwen_repository:
-            raise ContractError("prerequisite attempt is not Qwen")
-        try:
-            parsed = parse_model_response(
-                prerequisite["invoke"]["response_raw"], repository=qwen_repository
-            )
-        except ContractError as exc:
-            raise ContractError("Qwen prerequisite output did not parse") from exc
-        if guard_model_response(parsed, context.built.prompt_payload)["guard_status"] != "admitted":
-            raise ContractError("Qwen prerequisite output failed the response guard")
-        prerequisite_sha = prerequisite["receipt_sha256"]
-    elif prerequisite_qwen_receipt_path is not None:
-        raise ContractError("Qwen runtime must not declare a Qwen prerequisite")
-
     prompt, images = _prompt_and_images(context, repository)
     if constrained_decoder_builder is None:
         from fluidmix.explanation.vlm.constrained import build_logits_processor
@@ -2167,7 +2011,7 @@ def run_one_model_attempt_from_files(
     finally:
         del runtime
     receipt: dict[str, Any] = {
-        "schema_version": "wp7-vlm-model-attempt-receipt-v2",
+        "schema_version": "wp7-vlm-model-attempt-receipt-v3",
         "artifact_type": "wp7_vlm_model_attempt_receipt",
         "cohort_id": context.built.prompt_payload["cohort_id"],
         "binding": _attempt_expected_binding(context, repository),
@@ -2224,7 +2068,6 @@ def run_one_model_attempt_from_files(
                 else "not_proven"
             ),
         },
-        "prerequisite_qwen_receipt_sha256": prerequisite_sha,
     }
     receipt["receipt_sha256"] = _digest(receipt)
     _write_json_exclusive(output_path, receipt)
@@ -2269,20 +2112,9 @@ def aggregate_model_attempts_from_files(
             "raw_response": checked["invoke"]["response_raw"],
         })
         receipt_hashes.append(checked["receipt_sha256"])
-    by_hash = {row["receipt_sha256"]: row for row in checked_receipts}
-    qwen_hashes = {
-        digest for digest, row in by_hash.items()
-        if row["model"]["repository"] == MODELS[0]["repository"]
-    }
-    if any(
-        row["model"]["repository"] != MODELS[0]["repository"]
-        and row["prerequisite_qwen_receipt_sha256"] not in qwen_hashes
-        for row in by_hash.values()
-    ):
-        raise ContractError("non-Qwen aggregation requires its bound Qwen receipt")
     decision = aggregate_decision(context.built.prompt_payload, attempts)
     publication: dict[str, Any] = {
-        "schema_version": "wp7-vlm-aggregation-publication-v1",
+        "schema_version": "wp7-vlm-aggregation-publication-v2",
         "artifact_type": "wp7_vlm_aggregation_publication",
         "cohort_id": context.built.prompt_payload["cohort_id"],
         "bundle_sha256": context.binding["bundle_sha256"],
