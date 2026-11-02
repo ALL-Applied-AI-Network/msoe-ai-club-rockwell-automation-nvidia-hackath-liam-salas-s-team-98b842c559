@@ -36,6 +36,12 @@ QUICK_MODELS = tuple(
     row for row in MODELS
     if row["repository"] != "aacudad/AnomalyThink-Qwen3-VL-8B-KCR"
 )
+_PROSE_ONLY_GUARD_REASONS = frozenset({
+    "asserted_cause_claim", "citation_outside_bundle",
+    "numeric_claim_contradiction", "operator_action_claim",
+    "hidden_simulator_state_claim", "residue_quantity_claim",
+    "disposition_contradiction",
+})
 
 QUICK_SYSTEM_PROMPT = """You are inspecting a sequential liquid-dosing line from a fixed fill camera.
 The operator-provided dispense plan is the only recipe context: it lists tank labels, dose order,
@@ -209,6 +215,7 @@ def run_quick_vlm_runtime(
     built: BuiltBundle,
     model_snapshots: Mapping[str, str | Path],
     *, runtime_loader: object, runtime_invoker: object,
+    runtime_cache: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Run only Qwen and Cosmos, retaining the existing parser and guard."""
 
@@ -234,7 +241,11 @@ def run_quick_vlm_runtime(
         os.environ["CUBLAS_WORKSPACE_CONFIG"] = GENERATION_CONFIG[
             "cublas_workspace_config"
         ]
-        runtime = runtime_loader(repository, revision, model_snapshots[repository])
+        runtime = runtime_cache.get(repository) if runtime_cache is not None else None
+        if runtime is None:
+            runtime = runtime_loader(repository, revision, model_snapshots[repository])
+            if runtime_cache is not None:
+                runtime_cache[repository] = runtime
         try:
             _configure_runtime_determinism(runtime)
             logits_processor, _receipt = build_logits_processor(
@@ -267,16 +278,108 @@ def run_quick_vlm_runtime(
             })
         finally:
             torch_module = getattr(runtime, "torch_module", None)
+            if runtime_cache is None:
+                del runtime
+            if runtime_cache is None and (
+                torch_module is not None
+                and getattr(torch_module.cuda, "is_available", lambda: False)()
+            ):
+                torch_module.cuda.empty_cache()
+    return retain_structured_votes(aggregate_decision(built.prompt_payload, attempts))
+
+
+class QuickVLMRuntime:
+    """Session-owned Qwen/Cosmos runtime cache with sequential inference."""
+
+    def __init__(
+        self, model_snapshots: Mapping[str, str | Path], *,
+        runtime_loader: object, runtime_invoker: object,
+    ):
+        self.model_snapshots = dict(model_snapshots)
+        self.runtime_loader = runtime_loader
+        self.runtime_invoker = runtime_invoker
+        self.runtimes: dict[str, object] = {}
+
+    def __call__(self, built: BuiltBundle) -> tuple[Mapping[str, object], ...]:
+        aggregate = run_quick_vlm_runtime(
+            built, self.model_snapshots,
+            runtime_loader=self.runtime_loader,
+            runtime_invoker=self.runtime_invoker,
+            runtime_cache=self.runtimes,
+        )
+        return tuple(
+            row for row in aggregate["sources"]
+            if isinstance(row, Mapping) and isinstance(row.get("repository"), str)
+        )
+
+    def close(self) -> None:
+        while self.runtimes:
+            _repository, runtime = self.runtimes.popitem()
+            torch_module = getattr(runtime, "torch_module", None)
             del runtime
             if (
                 torch_module is not None
                 and getattr(torch_module.cuda, "is_available", lambda: False)()
             ):
                 torch_module.cuda.empty_cache()
-    return aggregate_decision(built.prompt_payload, attempts)
+
+
+def retain_structured_votes(aggregate: Mapping[str, object]) -> dict[str, object]:
+    """Keep a vote when only free prose failed, replacing that prose fail-closed."""
+
+    result = dict(aggregate)
+    rows = []
+    for raw in aggregate.get("sources", []):
+        if not isinstance(raw, Mapping):
+            continue
+        row = dict(raw)
+        reasons = row.get("guard_reasons")
+        confidence = row.get("confidence")
+        disposition = row.get("disposition")
+        prose_only = (
+            row.get("repository") in {item["repository"] for item in QUICK_MODELS}
+            and row.get("guard_status") == "excluded"
+            and isinstance(reasons, list) and bool(reasons)
+            and set(reasons).issubset(_PROSE_ONLY_GUARD_REASONS)
+            and disposition in {"keep", "discard"}
+            and isinstance(confidence, (int, float))
+            and not isinstance(confidence, bool)
+            and 0.0 <= float(confidence) <= 1.0
+        )
+        if prose_only:
+            row["excluded_model_explanation"] = row.get("explanation")
+            row["explanation_guard_reasons"] = list(reasons)
+            row["explanation_status"] = "excluded_deterministic_fallback"
+            row["explanation"] = (
+                "Deterministic fallback explanation: the model's structured vote "
+                f"was {disposition}; its free-text explanation was excluded by the guard."
+            )
+            score = float(confidence) if disposition == "discard" else 1.0 - float(confidence)
+            row.update({
+                "guard_status": "admitted", "guard_reasons": [],
+                "discard_score": score, "vote": score,
+            })
+        rows.append(row)
+    votes = [
+        float(row["vote"]) for row in rows
+        if row.get("guard_status") == "admitted"
+        and isinstance(row.get("vote"), (int, float))
+        and not isinstance(row.get("vote"), bool)
+    ]
+    mean = sum(votes) / len(votes) if votes else None
+    result.update({
+        "sources": rows, "valid_source_count": len(votes),
+        "mean_discard_score": mean,
+        "final_disposition": (
+            "insufficient_evidence" if len(votes) < 2
+            else "discard" if mean is not None and mean >= 0.5 else "keep"
+        ),
+    })
+    return result
 
 
 __all__ = [
-    "QUICK_MODELS", "QUICK_VLM_CONTRACT", "build_quick_vlm_bundle",
+    "QUICK_MODELS", "QUICK_VLM_CONTRACT", "QuickVLMRuntime",
+    "build_quick_vlm_bundle", "retain_structured_votes",
     "run_quick_vlm_runtime",
 ]

@@ -850,23 +850,15 @@ class DefaultProductionFactory:
                     "Qwen/Qwen3-VL-8B-Instruct", "nvidia/Cosmos-Reason2-8B",
                 ))
 
-            def vlm_runner(built: object):
-                from fluidmix.explanation.vlm.stock_runtime import (
-                    invoke_stock_runtime, load_stock_runtime,
-                )
-                from fluidmix.pipeline.service.quick_fill_vlm import (
-                    run_quick_vlm_runtime,
-                )
-                aggregate = run_quick_vlm_runtime(
-                    built, self._quick_vlm_snapshots,
-                    runtime_loader=load_stock_runtime,
-                    runtime_invoker=invoke_stock_runtime,
-                )
-                return tuple(
-                    row for row in aggregate["sources"]
-                    if isinstance(row, Mapping)
-                    and isinstance(row.get("repository"), str)
-                )
+            from fluidmix.explanation.vlm.stock_runtime import (
+                invoke_stock_runtime, load_stock_runtime,
+            )
+            from fluidmix.pipeline.service.quick_fill_vlm import QuickVLMRuntime
+            vlm_runner = QuickVLMRuntime(
+                self._quick_vlm_snapshots,
+                runtime_loader=load_stock_runtime,
+                runtime_invoker=invoke_stock_runtime,
+            )
 
         return QuickFillPipelineAdapter(
             predictor, context, calibration, vlm_runner=vlm_runner,

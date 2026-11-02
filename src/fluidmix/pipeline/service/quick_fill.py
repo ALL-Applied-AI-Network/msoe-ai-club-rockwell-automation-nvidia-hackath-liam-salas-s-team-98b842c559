@@ -513,6 +513,9 @@ class QuickFillPipelineAdapter:
         } for index, (repository, revision) in enumerate(models, start=1))
 
     def close(self) -> None:
+        closer = getattr(self._vlm_runner, "close", None)
+        if callable(closer):
+            closer()
         if self._vlm_directory is not None:
             self._vlm_directory.cleanup()
             self._vlm_directory = None
