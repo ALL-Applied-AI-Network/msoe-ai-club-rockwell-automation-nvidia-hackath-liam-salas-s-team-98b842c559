@@ -2,6 +2,64 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 9 held-out twin test
+
+### Result
+
+- **Measured, untuned held-out result:** commit `45292f1` froze the evaluator and hand ruler
+  before production discovery. The main review remained SHA-256 `ddfba000...71d1`, so the
+  existing Brev instance ran exactly one attempt with the selected weight
+  `1949bdea...b094`, full `holder_band_v2`, rows `[83,427)`, the hand-measured 3.04-row/mL
+  ruler and zero DataLoader workers. All 560 sealed renders were scored in 8.41 seconds.
+- Visible row-derived error across the 239 visible predictions was median/p95/max
+  `0/6.70/103` rows, or `0/2.204/33.882` mL. The frozen typical target of median <=1 mL
+  passed; the p95 <=2 mL target failed narrowly at 2.204 mL. Clean-case p95 was 0.510 mL;
+  edge 1.316 mL; sticker 4.391 mL; and foam 10.099 mL. The complete case and every populated
+  10 mL-bin table are retained in the committed compact summary.
+- Hidden success means a ground-truth-hidden level was both called hidden and fell inside
+  the reported range. It was 134/142 (94.37%): below the frozen 95% target but above the
+  user's practical 90% bar. Every detected hidden frame contained the true level. The range
+  width was always 92 rows / 30.263 mL. The rule also called 183/418 non-hidden frames
+  hidden (43.78%), confirming that this is a broad large-error flag rather than a precise
+  reading. There were four abstentions and three truth-crop fallbacks.
+- Cohorts differ sharply. Old Step 6 (500 frames) had visible median/p95/max
+  `0/0.987/25.987` mL and hidden success 123/128 (96.09%). New exact-v4 (60 frames) had
+  visible `0.329/12.862/33.882` mL and hidden success 11/14 (78.57%). The latter had one
+  abstention and one truth-crop fallback. This result was measured once and was not used to
+  tune the model, rule, ruler or evaluator.
+- Four-class segmentation macro-IoU was 0.953417 (empty 0.982695, liquid 0.983259, foam
+  0.905692, blocked 0.942022). This is synthetic twin evidence only and does not establish
+  real-world accuracy.
+- Integrity passed: exact seeds 2,100,000-2,100,499 and 2,101,000-2,101,059; four approved
+  manifests; 560 samples / 1,120 files; ordered ledger `bd5dced3...15ac`; 560 test images
+  loaded once; and zero train, validation, calibration or real-check frames loaded. An
+  independent local recomputation reproduced the case/cohort counts, median/p95/max,
+  134/142 hidden success, 183 false-hidden frames, four abstentions and three fallbacks.
+- Full ignored summary SHA-256 is `0eb50c97...8b1f`; the committed compact summary is
+  `e748bfda...99d`. Container evidence manifest SHA-256 `80667411...91d1` verified after
+  copying container -> fresh host `collected-v1` -> fresh ignored local `collected-v1`.
+  Transfer archive SHA-256 is `4131e0a9...71ef`. The input archive was separately verified
+  at all three layers as `001d6776...9a7b`.
+- Required disclosures are embedded in the result: system calibration failed; Step 9 ran
+  anyway by explicit user decision; the ruler is hand-measured rather than system-fitted;
+  and the result is measured and untuned. No code or configuration changed after scoring.
+  The Brev instance remains running and idle for Step 10.
+
+### Commands run
+
+- Build the immutable input package from commit `45292f1`; verify its checksum manifest,
+  archive extraction, production authority chain and Bash syntax locally, on the host and
+  in the container; create a fresh four-link, test-only dataset view.
+- Re-read/hash the newest review and verify fresh run/state/log paths; launch the one
+  detached zero-worker attempt; inspect state, progress, log, process and GPU evidence.
+- Verify the complete output checksum manifest; copy selected evidence container -> fresh
+  host -> fresh ignored local path without overwrite; verify all payload hashes at both
+  destinations; independently recompute the primary metrics from the 560 per-frame rows.
+
+### Problems
+
+- None. The single substantive attempt completed normally; no retry occurred.
+
 ## 2026-11-01 — Step 9 pre-test freeze
 
 ### Result
