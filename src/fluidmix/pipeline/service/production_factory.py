@@ -669,6 +669,19 @@ class ProductionAdapterFactory:
             expected_review_sha256=EXPECTED_HASHES[REVIEW],
         )
         cnn_model = prepare_cnn_model(loaded_cnn.model, device)
+        mask_predictor = lambda rgb, ref: predict_pair(  # noqa: E731
+            cnn_model, rgb, ref, threshold=0.5, device=device,
+        )
+        from fluidmix.perception.cnn.fill_level_adapter import (
+            configured_weights, load_fill_level_model, predict_fill_level_pair,
+        )
+        fill_level_weights = configured_weights()
+        if fill_level_weights is not None:
+            # Development switch: Joseph LoDuca's fill-level U-Net replaces the liquid mask.
+            fill_level_model = load_fill_level_model(fill_level_weights, device)
+            mask_predictor = lambda rgb, ref: predict_fill_level_pair(  # noqa: E731
+                fill_level_model, rgb, ref, threshold=0.5, device=device,
+            )
         run_context = request["run_context"]
         context, vial_templates = build_session_cohort(run_context, frame_rate_hz=10.0)
 
@@ -677,9 +690,7 @@ class ProductionAdapterFactory:
                 freeze=freeze, topology=topology,
                 recipe_pours=tuple(RecipePour(tank, 10.0) for tank in ("t200", "t400", "t100")),
                 previous_final_tank_id="t100", same_run_empty_reference_rgb=reference,
-                predictor=lambda rgb, ref: predict_pair(
-                    cnn_model, rgb, ref, threshold=0.5, device=device,
-                ),
+                predictor=mask_predictor,
                 cohort_id=str(context["cohort_id"]),
                 case_id=str(vial_templates[index]["vial_id"]),
                 vial_id=str(vial_templates[index]["vial_id"]), vial_position=index + 1,
