@@ -99,6 +99,7 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.pipeline.history_population",
         "fluidmix.pipeline.sixth_development_run",
         "fluidmix.perception.cnn.cnn_predictor",
+        "fluidmix.perception.cnn.fill_level_adapter",
         "fluidmix.core.contracts.evidence",
         "fluidmix.core.contracts.mask_trust",
         "fluidmix.core.policy",
@@ -111,6 +112,8 @@ PRODUCTION_PART_B_ROOTS = frozenset(
         "fluidmix.pipeline.service.http",
         "fluidmix.pipeline.service.manager",
         "fluidmix.pipeline.service.production_factory",
+        "fluidmix.pipeline.service.quick_fill",
+        "fluidmix.pipeline.service.quick_fill_vlm",
         "fluidmix.perception.materializer",
         "fluidmix.storage.sqlite.predicted_store_bridge",
         "fluidmix.perception.masks",
@@ -192,6 +195,10 @@ EVALUATION_ONLY_MODULES = frozenset(
         "fluidmix.explanation.vlm.development_materializer",
         "fluidmix.explanation.vlm.native_roi_rematerializer",
         "fluidmix.explanation.vlm.freeze_rebind",
+        "fluidmix.topdown.conveyor_guarded_tracking",
+        "fluidmix.topdown.conveyor_rebirth_tracking",
+        "fluidmix.topdown.conveyor_tracking",
+        "fluidmix.topdown.segmenter",
     }
 )
 
