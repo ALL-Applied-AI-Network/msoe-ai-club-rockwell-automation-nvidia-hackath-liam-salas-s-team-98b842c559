@@ -67,7 +67,7 @@ export function DiagnosticsScreen({ model }: DiagnosticsScreenProps) {
         {finals.length === 0 ? <p className="unavailable">No decision receipts fetched.</p> : (
           <table><thead><tr><th>Vial</th><th>Model</th><th>Repository</th><th>Revision</th><th>Guard</th><th>Elapsed (s)</th></tr></thead><tbody>
             {finals.flatMap(f => f.models.map(m => (
-              <tr key={`${f.vial_id}-${m.source_id}`}><td>{f.vial_id}</td><td>{m.source_id}</td><td>{val(m.repository)}</td><td>{m.revision ? shortCommit(m.revision) : unavailable}</td><td>{val(m.guard_status)}</td><td>{val((m as { elapsed_seconds?: number | null }).elapsed_seconds)}</td></tr>
+              <tr key={`${f.vial_id}-${m.source_id}`}><td>{f.vial_id}</td><td>{m.source_id}</td><td>{val(m.repository)}</td><td>{m.revision ? shortCommit(m.revision) : unavailable}</td><td>{val(m.guard_status)}</td><td>{m.elapsed_seconds == null ? unavailable : m.elapsed_seconds.toFixed(1)}</td></tr>
             )))}
           </tbody></table>
         )}

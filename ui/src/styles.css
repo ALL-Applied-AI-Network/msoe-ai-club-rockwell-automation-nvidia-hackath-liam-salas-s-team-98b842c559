@@ -79,10 +79,10 @@ code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size:
 .run-state--running, .run-state--starting { color: var(--running); font-weight: 700; }
 .run-state--failed { color: var(--discard); font-weight: 700; }
 .screen-tabs { display: flex; gap: 6px; justify-content: center; }
-.screen-tab { display: inline-flex; align-items: center; gap: 8px; background: transparent; }
+.screen-tab { display: inline-flex; align-items: center; gap: 8px; background: transparent; white-space: nowrap; padding: 8px 12px; }
 .screen-tab[aria-current="page"] { background: var(--panel-sunken); border-color: var(--neutral); }
 .screen-tab__level { font-size: .72rem; color: var(--muted); font-weight: 700; }
-.header-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.header-status { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .service-status { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); }
 .service-status--down, .service-status--stalled { color: var(--discard); font-weight: 700; }
 .service-status--degraded { color: var(--amber); font-weight: 700; }

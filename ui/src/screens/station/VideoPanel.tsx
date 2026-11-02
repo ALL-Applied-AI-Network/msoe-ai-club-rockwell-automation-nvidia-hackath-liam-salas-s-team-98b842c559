@@ -34,6 +34,7 @@ export function VideoPanel({ model }: { readonly model: InspectionModel }) {
   const box = useBoxSize(wrap);
   const [time, setTime] = useState({ t: 0, duration: 0 });
   const fps = model.fps ?? 10;
+  const runEnded = model.runPhase === "completed" || model.runPhase === "stopped" || model.runPhase === "failed";
 
   useEffect(() => {
     const el = video.current; if (!el || !model.videoUrl) return;
@@ -91,8 +92,8 @@ export function VideoPanel({ model }: { readonly model: InspectionModel }) {
                 <p>Fill step: <strong>{tracker?.fill_step_id ? `Stage ${tracker.fill_step_id}${totalStages ? ` of ${totalStages}` : ""}` : "—"}</strong></p>
                 <p>Measured volume: <strong>{measuredMl != null ? `${measuredMl.toFixed(1)} mL` : "—"}</strong> <span className={`source-tag source-tag--${measuredMl != null ? tracker?.volume_provenance ?? "measured" : "unavailable"}`}>{measuredMl != null ? tracker?.volume_provenance ?? "measured" : "unavailable"}</span></p>
               </>
-            ) : <p className="station-hud__note">Not processed yet</p>
-          ) : <p className="station-hud__note">{hasVideo ? "Not processed yet" : "No event for this vial"}</p>}
+            ) : <p className="station-hud__note">{runEnded ? "No runner measurement for this frame" : "Not processed yet"}</p>
+          ) : <p className="station-hud__note">{!hasVideo ? "No event for this vial" : runEnded ? "No runner measurement for this frame" : "Not processed yet"}</p>}
         </div>
         {hasVideo && (
           <div className="station-chips-overlay">

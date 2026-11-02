@@ -1,3 +1,4 @@
+import { cantAssessMessage, pickExplanation, unavailableCode } from "../../model/plainMessage";
 import { dispositionView, finalDisposition, vialLabel, vialView } from "../../model/selectors";
 import type { InspectionModel } from "../../model/useInspection";
 import { EvidenceGrid } from "./EvidenceGrid";
@@ -17,8 +18,11 @@ export function VialDetailScreen({ model, vialId, onSelectVial }: VialDetailScre
   const view = vialView(vial, { runEnded: model.runPhase !== "running" && model.runPhase !== "starting", vialCount: model.vialCount });
   const disposition = finalDisposition(vial);
   const avg = vial.average;
-  const score = avg ? avg.scores.discard : null;
-  const line = vial.explanation?.plain_language ?? (disposition ? `${dispositionView(disposition).label}.` : "Waiting for a decision.");
+  const score = avg && avg.disposition !== "insufficient_evidence" ? avg.scores[avg.disposition] : null;
+  const picked = pickExplanation(vial);
+  const line = picked && !picked.fallback ? picked.item.plain_language
+    : disposition === "insufficient_evidence" ? cantAssessMessage(unavailableCode(vial))
+      : picked?.item.plain_language ?? (disposition ? `${dispositionView(disposition).label}.` : "Waiting for a decision.");
   return (
     <section className="screen detail-screen" aria-label="Vial detail">
       <header className="panel detail-header">

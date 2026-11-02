@@ -1,5 +1,5 @@
-import { finalDisposition } from "../../model/selectors";
-import type { ExplanationPayload, VialState } from "../../runner/contract";
+import { finalDisposition } from "./selectors";
+import type { ExplanationPayload, VialState } from "../runner/contract";
 
 /** Operator-readable reason for an insufficient-evidence result, from the runner's unavailable_reason code. */
 export function cantAssessMessage(code: string | null): string {

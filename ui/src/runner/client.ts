@@ -121,7 +121,7 @@ export class HttpRunnerClient implements RunnerClient {
   constructor(
     private readonly origin: string,
     private readonly expectedPipelineCommit: string | readonly string[],
-    private readonly fetcher: typeof fetch = fetch,
+    private readonly fetcher: typeof fetch = (input, init) => fetch(input, init),
     private readonly eventSourceFactory: EventSourceFactory = url => new EventSource(url)
   ) {}
 

@@ -10,9 +10,11 @@
 .detail-grid thead th { background: var(--panel-2); }
 .detail-cell--discard { outline: 3px solid var(--discard); outline-offset: -3px; background: var(--discard-bg); }
 .detail-cell--check { outline: 3px solid var(--amber-fill); outline-offset: -3px; background: var(--amber-bg); }
-.detail-crop { display: block; width: 100%; max-height: 180px; object-fit: contain; background: var(--video-bg); border-radius: 4px; }
-.detail-crop--missing { display: grid; place-items: center; min-height: 80px; padding: 8px; color: var(--muted); font-style: italic; border: 1px dashed var(--line); background: var(--panel-sunken); text-align: center; }
-.detail-swatch-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.detail-cell { display: table-cell; }
+.detail-cell > .detail-crop { float: left; margin-right: 12px; }
+.detail-crop { display: block; height: 150px; width: auto; max-width: 45%; object-fit: contain; background: var(--video-bg); border-radius: 4px; }
+.detail-crop--missing { display: grid; place-items: center; min-height: 80px; height: auto; width: 140px; padding: 8px; color: var(--muted); font-style: italic; border: 1px dashed var(--line); background: var(--panel-sunken); text-align: center; }
+.detail-swatch-row { display: flex; align-items: center; gap: 8px; margin-top: 0; }
 .detail-swatch { display: inline-block; width: 40px; height: 40px; border: 1px solid var(--neutral); border-radius: 4px; vertical-align: middle; }
 .detail-lab, .detail-de { font-variant-numeric: tabular-nums; }
 .detail-de { margin: 8px 0 0; padding: 0; list-style: none; }
@@ -36,3 +38,4 @@
 .detail-tick { padding: 2px 8px; border: 1px solid var(--neutral); border-radius: 10px; font-size: .85rem; font-variant-numeric: tabular-nums; }
 .detail-tick--bad { border-style: dashed; border-color: var(--amber); color: var(--amber); }
 @media (max-width: 1100px) { .detail-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } .detail-timeline { flex-direction: column; } }
+.detail-grid th[scope="row"] { width: 110px; }

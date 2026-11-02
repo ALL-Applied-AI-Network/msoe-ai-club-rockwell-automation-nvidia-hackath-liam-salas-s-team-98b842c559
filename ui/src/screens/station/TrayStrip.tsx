@@ -25,8 +25,8 @@ export function TrayStrip({ model }: { readonly model: InspectionModel }) {
           );
         })}
         {Array.from({ length: Math.min(waiting, 2) }, (_, k) => (
-          <div key={`wait-${k}`} className="station-slot station-slot--empty" aria-label={`Tray position ${ids.length + k + 1} waiting`}>
-            <span className="station-slot__pos">{ids.length + k + 1}</span><span className="unavailable">○ waiting</span>
+          <div key={`wait-${k}`} className="station-slot station-slot--empty" aria-label={`Tray position ${ids.length + k + 1} ${ended ? "not reached" : "waiting"}`}>
+            <span className="station-slot__pos">{ids.length + k + 1}</span><span className="unavailable">{ended ? "— not reached" : "○ waiting"}</span>
           </div>
         ))}
       </div>

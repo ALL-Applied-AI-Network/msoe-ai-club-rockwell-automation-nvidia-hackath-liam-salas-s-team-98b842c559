@@ -28,6 +28,7 @@ export function DeltaETrend({ model, onOpenDetail }: DeltaETrendProps) {
         <rect x={PAD.l} y={yKeep} width={plotW} height={PLOT_BOTTOM - yKeep} className="overview-band overview-band--keep" />
         <rect x={PAD.l} y={yDisc} width={plotW} height={yKeep - yDisc} className="overview-band overview-band--check" />
         <rect x={PAD.l} y={PAD.t} width={plotW} height={yDisc - PAD.t} className="overview-band overview-band--out" />
+        <line x1={PAD.l} x2={PAD.l + plotW} y1={yDisc} y2={yDisc} className="overview-limit-line" />
         <text x={PAD.l + plotW - 6} y={yKeep + 18} textAnchor="end" className="overview-band-label">≤ 1.0 keep limit</text>
         <text x={PAD.l + plotW - 6} y={yDisc + 18} textAnchor="end" className="overview-band-label">1.0–2.0 check band</text>
         <text x={PAD.l + plotW - 6} y={PAD.t + 18} textAnchor="end" className="overview-band-label">&gt; 2.0 outside</text>

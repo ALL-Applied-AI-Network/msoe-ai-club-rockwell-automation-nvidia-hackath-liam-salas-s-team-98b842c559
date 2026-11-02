@@ -3,7 +3,7 @@ import { useState } from "react";
 import { dispositionView, finalDisposition, sourceAgreement, vialLabel, vialRole, vialView, type SourceAgreement } from "../../model/selectors";
 import type { InspectionModel } from "../../model/useInspection";
 import type { Disposition } from "../../runner/contract";
-import { cantAssessMessage, isInsufficient, pickExplanation, unavailableCode } from "./plainMessage";
+import { cantAssessMessage, isInsufficient, pickExplanation, unavailableCode } from "../../model/plainMessage";
 
 const CHOICES: readonly { readonly value: Disposition; readonly label: string }[] = [
   { value: "keep", label: "Keep" }, { value: "discard", label: "Discard" }, { value: "insufficient_evidence", label: "Can't assess" }

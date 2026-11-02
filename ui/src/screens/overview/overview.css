@@ -12,7 +12,8 @@
 .overview-trend figcaption { color: var(--muted); font-size: .9rem; margin-top: 6px; }
 .overview-band--keep { fill: var(--panel-2); }
 .overview-band--check { fill: var(--amber-bg); }
-.overview-band--out { fill: var(--discard-bg); }
+.overview-band--out { fill: transparent; }
+.overview-limit-line { stroke: var(--discard); stroke-width: 2; stroke-dasharray: 6 4; }
 .overview-band-label, .overview-tick, .overview-axis, .overview-changeover-label { fill: var(--muted); font-size: 13px; }
 .overview-changeover-label { fill: var(--text); font-weight: 700; }
 .overview-grid { stroke: var(--line); stroke-width: 1; }
