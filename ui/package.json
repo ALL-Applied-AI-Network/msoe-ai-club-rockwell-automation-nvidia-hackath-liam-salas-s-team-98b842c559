@@ -13,7 +13,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "e2e": "playwright test --project=test-only",
-    "e2e:real": "playwright test --config=playwright.real.config.ts",
+    "e2e:screens": "playwright test --config=playwright.screens.config.ts",
     "e2e:install": "playwright install chromium"
   },
   "dependencies": {

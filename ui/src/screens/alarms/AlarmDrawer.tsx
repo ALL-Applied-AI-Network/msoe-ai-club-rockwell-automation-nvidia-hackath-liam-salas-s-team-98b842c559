@@ -19,10 +19,16 @@ const PRIORITY: Record<AlarmPriority, { label: string; shape: string; tone: "red
 export function AlarmDrawer({ model, alarms, open, operatorId, onClose, onOpenDetail }: AlarmDrawerProps) {
   const ref = useRef<HTMLElement>(null);
   useEffect(() => { if (open) ref.current?.focus(); }, [open]);
+  // Document-level so Escape still works after focus leaves the drawer (e.g. an acknowledged row's button disables).
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open, onClose]);
   if (!open) return null;
   return (
-    <aside ref={ref} className="alarm-drawer panel" role="dialog" aria-modal="true" aria-label="Alarm list" tabIndex={-1}
-      onKeyDown={e => { if (e.key === "Escape") onClose(); }}>
+    <aside ref={ref} className="alarm-drawer panel" role="dialog" aria-modal="true" aria-label="Alarm list" tabIndex={-1}>
       <header className="alarm-head"><h2>Alarms</h2><button type="button" className="hmi-button" onClick={onClose}>Close</button></header>
       {alarms.length === 0 ? <p className="unavailable">No alarms.</p> : (
         <table className="alarm-table">
