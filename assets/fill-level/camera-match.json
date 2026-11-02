@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "camera": "FillCam",
+  "resolution": [
+    640,
+    480
+  ],
+  "source_camera_json_sha256": "11966571ffa71a979297a0c6c730c739f33d86a0578fe0b4b890dd4a7ce1c936",
+  "source_station_usda_sha256": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
+  "provenance": "Targets are informed by real video 5 and reproduced by scripts/measure_fill_level_camera_targets.py. Overrides are the least-invasive two-parameter fit from the organizer liquid mesh's visible top edge at exactly 30 mL and 80 mL.",
+  "overrides": {
+    "focal_length": 0.4376479886937694,
+    "vertical_aperture_offset": 0.005332746786271117
+  },
+  "surface_measurement": {
+    "columns_half_open": [
+      298,
+      316
+    ],
+    "rgb_search_radius_px": 12,
+    "half_window_rows": 6
+  },
+  "targets": [
+    {
+      "volume_ml": 30.0,
+      "surface_row": 329.0,
+      "tolerance_px": 3.0
+    },
+    {
+      "volume_ml": 80.0,
+      "surface_row": 177.0,
+      "tolerance_px": 3.0
+    }
+  ],
+  "holder_context": {
+    "column_x": 272,
+    "real_dark_rows": [
+      210,
+      259
+    ],
+    "acceptance_note": "Context diagnostic only: RGB darkness depends on material and lighting. Camera acceptance is the two known-height liquid targets."
+  }
+}

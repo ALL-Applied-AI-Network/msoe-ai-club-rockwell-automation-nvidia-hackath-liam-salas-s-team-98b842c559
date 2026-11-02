@@ -1,0 +1,255 @@
+{
+  "schema_version": 1,
+  "purpose": "Step 8 Revision 1 synthetic gate and real-calibration failure checkpoint",
+  "status": "failed",
+  "decision": "stop_after_exactly_one_revision1_calibration",
+  "governing_review_sha256": "a7ce1da71879a0be24ee7ac1886a90c19eda97a181a3907fcd025cd554dfde70",
+  "revision_disclosure": {
+    "revision_count_after_initial_calibration_failure": 1,
+    "informed_by_real_data": "video-5 calibration vials 1 and 13 only",
+    "initial_failure_causes": [
+      "the original rule searched above the synthetic vial outline and selected the real dark nozzle",
+      "real calibration liquids were darker than the rendered training distribution"
+    ],
+    "changes": [
+      "derive a vial-interior measurement-row interval from synthetic validation labels",
+      "add train-only mask-guided liquid darkening and global photometric jitter while retaining JPEG 4:2:0, blur and noise",
+      "add cosine learning-rate decay",
+      "compare original and revised models on normal and fixed-seed darkened synthetic validation"
+    ],
+    "additional_revision_or_real_calibration_run_permitted": false
+  },
+  "synthetic_row_derivation": {
+    "selection_source": "synthetic_validation_label_outline_intersection",
+    "frame_count": 300,
+    "measurement_rows_full_half_open": [
+      83,
+      427
+    ],
+    "per_frame_start_min": 71,
+    "per_frame_start_max": 83,
+    "per_frame_end_exclusive_min": 427,
+    "per_frame_end_exclusive_max": 442,
+    "ordered_hash_ledger_sha256": "8969e9727149dc2f987b2afb0524fc042f46d5396adbb199411ce1c2ca2066dd"
+  },
+  "training": {
+    "source": "synthetic_train_only",
+    "selection_split": "validation",
+    "used_counts": {
+      "train": 3000,
+      "validation": 300
+    },
+    "seed": 20261101,
+    "epochs_completed": 30,
+    "elapsed_seconds": 400.91338634490967,
+    "learning_rate_scheduler": {
+      "name": "cosine_annealing",
+      "initial_learning_rate": 0.001,
+      "minimum_learning_rate": 0.00001,
+      "t_max_epochs": 30
+    },
+    "augmentation": {
+      "mask_guided_liquid_darkening_probability": 0.5,
+      "liquid_value_uniform": [
+        0.03,
+        0.35
+      ],
+      "liquid_hue": "uniform_full_range",
+      "liquid_saturation": "uniform_full_range",
+      "liquid_texture": "multiplicative_value_scaling",
+      "global_photometric_jitter": [
+        "brightness",
+        "contrast",
+        "gamma",
+        "saturation",
+        "white_balance"
+      ],
+      "retained_augmentations": [
+        "JPEG 4:2:0",
+        "Gaussian blur",
+        "Gaussian noise"
+      ],
+      "validation_augmentation": false
+    },
+    "best_epoch": 27,
+    "best_validation_iou": {
+      "macro": 0.9650300577302242,
+      "per_class_empty_liquid_foam_blocked": [
+        0.9858758811669422,
+        0.9875727483920728,
+        0.9352963026458655,
+        0.9513752987160166
+      ]
+    },
+    "best_weights": {
+      "filename": "best-epoch-027.pt",
+      "sha256": "51f4e3cf95bfda21f20d77ebb27d05b9e92beb74088b052d0ee98167177f0197",
+      "git_tracked": false
+    },
+    "last_weights_sha256": "fb7b078d8e8a183aeee5b08d86f1df8ba761e2243051f051c4d7c45951e2e331",
+    "summary_sha256": "2c877effcad9b2c77d881b3dd4b6f2f1f7b912cdba3e7e342b88bb5786a99336",
+    "progress_sha256": "0e009ad979842443a0f78797d7d685c65aac9eba7adceb3d8d9890cac01350c2"
+  },
+  "synthetic_comparison": {
+    "fixed_darkened_validation_seed": 20261101,
+    "normal_validation": {
+      "original_macro_iou": 0.9705775678116405,
+      "revised_macro_iou": 0.9650325293474765,
+      "macro_iou_delta_revised_minus_original": -0.005545038464163987,
+      "original_visible_surface_p95_rows": 2.0,
+      "revised_visible_surface_p95_rows": 2.549999999999983,
+      "p95_delta_rows_revised_minus_original": 0.549999999999983
+    },
+    "darkened_validation": {
+      "original_macro_iou": 0.9649440270694712,
+      "revised_macro_iou": 0.978788678017467,
+      "macro_iou_delta_revised_minus_original": 0.013844650947995807,
+      "original_visible_surface_p95_rows": 14.799999999999955,
+      "revised_visible_surface_p95_rows": 2.0,
+      "p95_delta_rows_revised_minus_original": -12.799999999999955
+    },
+    "normal_validation_p95_gate": {
+      "maximum_rows": 3.0,
+      "observed_rows": 2.549999999999983,
+      "passed": true
+    },
+    "compact_summary_sha256": "b5f546ad8e4858d85cd7b05e033bd22bcceae72563350960b2fbafbe739d60a0"
+  },
+  "revised_validation_rule": {
+    "measurement_columns_full_half_open": [
+      298,
+      316
+    ],
+    "measurement_rows_full_half_open": [
+      83,
+      427
+    ],
+    "minimum_liquid_pixels_per_row": 5,
+    "minimum_blocked_pixels_per_row": 1,
+    "frame_count": 300,
+    "status_counts": {
+      "visible": 210,
+      "hidden": 89,
+      "abstain": 1
+    },
+    "visible_surface_error_rows": {
+      "median_absolute": 1.0,
+      "p95_absolute": 2.549999999999983,
+      "maximum_absolute": 59.0,
+      "mean_absolute": 2.052380952380952
+    },
+    "hidden_geometry": {
+      "in_predicted_range": 25,
+      "rate_over_all_frames": 0.08333333333333333,
+      "rate_given_predicted_hidden": 0.2808988764044944
+    },
+    "compact_summary_sha256": "2d45def6f309bf57e93f680129df196e696a0abedc2461283536aa8cfd4c6fa6",
+    "full_summary_sha256": "ea67bac72f4070a9c461c2e86e725e39d4dd57ee51f8d7fe1c9f1b8abb4064df"
+  },
+  "real_calibration": {
+    "attempt_count_for_revision1": 1,
+    "attempt": "revision1-calibration-attempt-01",
+    "status": "FAILED",
+    "error": "calibration needs at least 3 visible rows; found 0",
+    "frame_count": 98,
+    "frame_index_sha256": "73181d39ecc8ddc3ce8bb43b2db87a89f4f07d279efe5af70eb41026eb24f9b2",
+    "source_video_sha256": "6f87cec1aeec3b2bae6dac639a317c077a3f175f27abd5fc8430d6953d9d05b9",
+    "windows_csv_sha256": "19174a4b706fe896b177ba71c8ba2bdf850ceb9cf3a40522dcdaa42d53904229",
+    "acceptance": {
+      "required_order": "30 mL median row below 80 mL median row",
+      "target_rows": {
+        "30_ml": 329,
+        "80_ml": 177
+      },
+      "tolerance_rows": 4,
+      "passed": false
+    },
+    "vials": [
+      {
+        "vial": 1,
+        "volume_ml": 30,
+        "frames": 28,
+        "status_counts": {
+          "visible": 23,
+          "hidden": 5,
+          "abstain": 0
+        },
+        "visible_liquid_top_counts": {
+          "99": 20,
+          "224": 3
+        },
+        "visible_median_row": 99,
+        "target_row": 329,
+        "within_tolerance": false
+      },
+      {
+        "vial": 13,
+        "volume_ml": 80,
+        "frames": 70,
+        "status_counts": {
+          "visible": 0,
+          "hidden": 70,
+          "abstain": 0
+        },
+        "hidden_liquid_top_counts": {
+          "175": 1,
+          "176": 5,
+          "177": 25,
+          "178": 18,
+          "179": 9,
+          "181": 1,
+          "197": 2,
+          "198": 1,
+          "199": 5,
+          "200": 3
+        },
+        "visible_median_row": null,
+        "target_row": 177,
+        "within_tolerance": false
+      }
+    ],
+    "ruler_created": false,
+    "physical_accuracy_claimed": false,
+    "state_sha256": "dacf43fb6b2960aa840391e5379e86d76e8d746dbf3830ae1f74ab1382e6be14",
+    "per_frame_sha256": "6ad4d5fb628d33d7e8a74d36cec63add57e0482ad41699e33275dbc8f24cffe1"
+  },
+  "integrity": {
+    "training_uses_real_frames": false,
+    "selection_uses_test": false,
+    "test_manifests_opened": 0,
+    "test_images_loaded": 0,
+    "real_check_vials_opened": 0,
+    "step9_started": false
+  },
+  "code_sha256": {
+    "calibration_script": "958157ddc904c2b58778bc0f513675732db2c0cec917ee345f998bdbf845e66a",
+    "validation_script": "8a4bee3537a9395329a643e9e4a6c680fbd9c87a784acd1888bfda9aea115278",
+    "revision_evaluator_script": "b2b000b640f2e0ee8c6ed4537c9e03f1ba47cdaea0bcbbe0c422d1f9af87c2fb",
+    "training_script": "65c2240376c949d209c10db2b368756963d1baaa0acf49b65e781f0b08e18046",
+    "ruler_module": "8aab63f3439d52c5a6210ce0bb93a8ca2bc924fb5eb04c57310135e22d84e357",
+    "surface_evaluator_module": "d1cd49c2295c7be77fadcd0af61feaf0e4669b1ea3c7c30ff7358625303a464f",
+    "revision_evaluator_module": "0f6dd999f4ab833d3a1df4475e977c38a7f30bf3bef29cda7e241be6911a3c0c",
+    "training_module": "dfe85a4aeba7796bb09fb0d98c6d01c14cb07f57602629bab9cc2b1300375501"
+  },
+  "preserved_evidence": {
+    "remote_host_path": "/home/ubuntu/fill-level-cnn/step8-revision1-20261101-codex-01/collected/revision1-failed-checkpoint-20261101T100906Z",
+    "local_ignored_path": "outputs/fill-level-cnn/step8-revision1-20261101-codex-01/revision1-failed-checkpoint-20261101T100906Z",
+    "input_bundle_sha256": "7b476e2ee5085b4a6cc5372c8b5a3c6f88bd62806c8b77a078dacf712ff86dbc",
+    "file_count": 69,
+    "size_bytes": 494322230,
+    "sha256sums_sha256": "55af0b505e2dc450ea88509118427dcc1fe18bf5c53fe6f3897f2c5b9d39dfff",
+    "remote_hash_verification": "passed",
+    "local_hash_verification": "passed"
+  },
+  "verification": {
+    "focused_tests": "60 passed, 1 skipped",
+    "full_tests": "7 failed, 195 passed, 2 skipped; failures are known Windows platform-only fake-ffmpeg-executable and symlink-privilege cases",
+    "independent_reviews": "rule, training and synthetic evaluator reviews found no remaining blocking issue after fixes"
+  },
+  "brev": {
+    "instance": "isaac-launchable-d70fec",
+    "left_running": true,
+    "instance_action_taken": "none"
+  },
+  "next_action": "Stop at the Step 8 failure checkpoint. Do not revise or rerun calibration, and do not open Step 9 test or real-check data without a newer explicit GO."
+}

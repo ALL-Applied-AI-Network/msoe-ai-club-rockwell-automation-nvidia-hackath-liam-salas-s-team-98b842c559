@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "purpose": "Step 8 real-calibration failure checkpoint",
+  "status": "failed",
+  "decision": "stop_before_step9_pending_review",
+  "evidence_label": "measured_on_permitted_real_calibration_frames",
+  "governing_review_sha256": "34b3e05e57688b79633d080aac637eabf7f95a620cdc6ffd4780089838a60e9b",
+  "validation_freeze": {
+    "artifact_sha256": "797a2bb83c063ec9b9420dac8bd931cf0ea891a6cbbbf535e0efec1503b57e12",
+    "full_summary_sha256": "5afe39c9818318626e0e0010627f5e6ae09d27439bad2b38fccbd40caf74462d",
+    "selection_source": "synthetic_validation_only",
+    "frame_count": 300,
+    "rule_config": {
+      "crop_xyxy": [
+        256,
+        48,
+        368,
+        464
+      ],
+      "measurement_columns_full_half_open": [
+        298,
+        316
+      ],
+      "minimum_liquid_pixels_per_row": 5,
+      "minimum_blocked_pixels_per_row": 1,
+      "rows_per_ml_for_reporting": 3.04
+    },
+    "visible_metrics": {
+      "predictions": 215,
+      "median_absolute_error_rows": 1,
+      "p95_absolute_error_rows": 2,
+      "max_absolute_error_rows": 60,
+      "median_absolute_error_ml": 0.32894736842105265,
+      "p95_absolute_error_ml": 0.6578947368421053,
+      "max_absolute_error_ml": 19.736842105263158
+    },
+    "hidden_metrics": {
+      "cohort_frames": 72,
+      "predicted_hidden": 38,
+      "predicted_hidden_rate": 0.5277777777777778,
+      "geometry_in_predicted_range": 21,
+      "true_in_range_over_all_frames_rate": 0.2916666666666667,
+      "true_in_range_given_predicted_hidden_rate": 0.5526315789473685
+    },
+    "access_counts": {
+      "train_images_loaded": 0,
+      "train_manifests_opened": 0,
+      "test_images_loaded": 0,
+      "test_manifests_opened": 0,
+      "real_frames_loaded": 0
+    }
+  },
+  "calibration_inputs": {
+    "frame_index_sha256": "73181d39ecc8ddc3ce8bb43b2db87a89f4f07d279efe5af70eb41026eb24f9b2",
+    "frame_count": 98,
+    "image_contract": {
+      "encoding": "PNG",
+      "lossless": true,
+      "width": 640,
+      "height": 480
+    },
+    "source_video_sha256": "6f87cec1aeec3b2bae6dac639a317c077a3f175f27abd5fc8430d6953d9d05b9",
+    "windows_csv_sha256": "19174a4b706fe896b177ba71c8ba2bdf850ceb9cf3a40522dcdaa42d53904229",
+    "checkpoint_sha256": "86e89644a6b45627f331cc311e6a8a87e3e402e08a2183796f1abe8c9b5ddbeb",
+    "windows": [
+      {
+        "vial": 1,
+        "volume_ml": 30,
+        "first_frame": 816,
+        "last_frame": 843,
+        "frame_count": 28
+      },
+      {
+        "vial": 13,
+        "volume_ml": 80,
+        "first_frame": 19700,
+        "last_frame": 19769,
+        "frame_count": 70
+      }
+    ]
+  },
+  "calibration_observation": {
+    "attempt_status": "FAILED",
+    "failure_utc": "2026-11-01T09:21:35.835102Z",
+    "guard_error": "30 mL row must be below the 80 mL row",
+    "vials": [
+      {
+        "vial": 1,
+        "volume_ml": 30,
+        "frames": 28,
+        "status_counts": {
+          "visible": 28,
+          "hidden": 0,
+          "abstain": 0
+        },
+        "predicted_row_min": 48,
+        "predicted_row_median": 48,
+        "predicted_row_max": 48
+      },
+      {
+        "vial": 13,
+        "volume_ml": 80,
+        "frames": 70,
+        "status_counts": {
+          "visible": 70,
+          "hidden": 0,
+          "abstain": 0
+        },
+        "predicted_row_min": 48,
+        "predicted_row_median": 48,
+        "predicted_row_max": 48
+      }
+    ],
+    "diagnosis": {
+      "conclusion": "genuine real-domain model/rule transfer failure; not extraction, transport, preprocessing, checkpoint, or calibrator failure",
+      "crop_first_full_frame_row": 48,
+      "center_strip_width_pixels": 18,
+      "center_strip_liquid_pixels_at_row_48": {
+        "minimum": 18,
+        "median": 18,
+        "maximum": 18,
+        "frames": 98
+      },
+      "validation_swept_thresholds_that_still_select_row_48": [
+        1,
+        18
+      ],
+      "vial_1_reference_row_329_liquid_pixels": {
+        "minimum": 0,
+        "median": 9,
+        "maximum": 18
+      },
+      "vial_13_reference_row_177_liquid_pixels": {
+        "minimum": 0,
+        "median": 0,
+        "maximum": 0
+      },
+      "vial_13_reference_row_177_blocked_pixels_median": 18,
+      "consequence": "the frozen rule cannot provide two ordered real calibration points"
+    },
+    "ruler_created": false,
+    "physical_accuracy_claimed": false
+  },
+  "holdout_access": {
+    "test_manifests_opened": 0,
+    "test_images_loaded": 0,
+    "step9_started": false
+  },
+  "code_sha256": {
+    "calibration_script": "01ac6d52a5e18dce172499d655128db0306536fa3a75d4bfbfe4d51a222dba45",
+    "extractor_script": "095ebfc3b43b47c40bad91c9d03ddaaa58bfcae969b780cea134d1cb66589763",
+    "ruler_module": "f4a6a0f22bca96e36d2ecafbd2e69b05beafbdffacd23a4367a6de5d6a9649d6",
+    "surface_rule_module": "97e260c4b138f5368962ac2773bddf0676f96976b800e3cf724056ae33b1383b",
+    "training_module": "fb941d36ca8f7b1a03227c3bf8cf46d29a4c7f1d1437e88b6d61106838b8b27d"
+  },
+  "preserved_evidence": {
+    "remote_host_path": "/home/ubuntu/fill-level-cnn/step8-calibration-20261101-codex-01/collected/calibration-failed-attempt-01-20261101T092135Z",
+    "local_ignored_path": "outputs/fill-level-cnn/step8-calibration-20261101-codex-01/calibration-failed-attempt-01-20261101T092135Z",
+    "calibration_frames_jsonl_sha256": "7a049a783dd70f269abda05d9e4ea79ded70491bf74769d9a5eb044f375dbb4a",
+    "state_jsonl_sha256": "0dbcf04d3a54c32ecc96c698121aad32915e3e3c23b8ccdd7d324a322dc78340",
+    "sha256sums_sha256": "d2bd8014fbc2d73d13bdd4ae1c5c8f84182cccedb4420e6f2f7e7fcb57fbb2c4",
+    "local_hash_verification": "passed"
+  },
+  "next_action": "A newer review or explicit user decision must authorize recovery; do not retune the frozen rule from these real frames and do not open Step 9 test data."
+}

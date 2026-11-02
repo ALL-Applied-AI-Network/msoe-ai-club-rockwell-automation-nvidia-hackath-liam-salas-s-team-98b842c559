@@ -1,0 +1,527 @@
+{
+  "batch_contract": {
+    "expected_chunks": 30,
+    "expected_role_counts": {
+      "test": 560,
+      "train": 3480,
+      "val": 360
+    },
+    "new_chunk_index_remap": "exact-v4 00-09 -> combined 20-29",
+    "test_chunks_linked": 0,
+    "training_root_roles": [
+      "train",
+      "val"
+    ]
+  },
+  "case_coverage": {
+    "by_role": {
+      "test": {
+        "clean": 114,
+        "edge_zone": 283,
+        "foam": 289,
+        "hidden": 142,
+        "sampling_bands": {
+          "full_0_85": 135,
+          "twin_hidden_48_1_66_5": 142,
+          "twin_lower_edge_40_1_48_1": 157,
+          "twin_upper_edge_66_5_70_5": 126
+        },
+        "sticker": 329,
+        "wet_wall": 182,
+        "zero_level": 0
+      },
+      "train": {
+        "clean": 709,
+        "edge_zone": 1695,
+        "foam": 1718,
+        "hidden": 913,
+        "sampling_bands": {
+          "full_0_85": 872,
+          "twin_hidden_48_1_66_5": 913,
+          "twin_lower_edge_40_1_48_1": 867,
+          "twin_upper_edge_66_5_70_5": 828
+        },
+        "sticker": 2091,
+        "wet_wall": 1060,
+        "zero_level": 0
+      },
+      "val": {
+        "clean": 78,
+        "edge_zone": 182,
+        "foam": 177,
+        "hidden": 90,
+        "sampling_bands": {
+          "full_0_85": 88,
+          "twin_hidden_48_1_66_5": 90,
+          "twin_lower_edge_40_1_48_1": 98,
+          "twin_upper_edge_66_5_70_5": 84
+        },
+        "sticker": 207,
+        "wet_wall": 107,
+        "zero_level": 0
+      }
+    },
+    "total": {
+      "clean": 901,
+      "edge_zone": 2160,
+      "foam": 2184,
+      "hidden": 1145,
+      "sampling_bands": {
+        "full_0_85": 1095,
+        "twin_hidden_48_1_66_5": 1145,
+        "twin_lower_edge_40_1_48_1": 1122,
+        "twin_upper_edge_66_5_70_5": 1038
+      },
+      "sticker": 2627,
+      "wet_wall": 1349,
+      "zero_level": 0
+    }
+  },
+  "chunks": [
+    {
+      "attempt": "attempt-03",
+      "chunk": "00-val-1100000-1100199",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "dc821edb04230d1561e21b02a6bda3d5910fe379dc6f2236c5939ee9bee99a8e",
+      "role": "val",
+      "seed_end": 1100199,
+      "seed_start": 1100000,
+      "source_chunk": "00-val-1100000-1100199"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "01-val-1100200-1100299",
+      "component": "step6",
+      "frame_count": 100,
+      "integrity_passed": true,
+      "manifest_sha256": "6130ee22c31316335b97bce8a678551c998b6252c653fb3a0aabd18846a64af7",
+      "role": "val",
+      "seed_end": 1100299,
+      "seed_start": 1100200,
+      "source_chunk": "01-val-1100200-1100299"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "02-train-0100000-0100199",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "8a22728a5346dd13dbb9da24235fd28369bb8a84f27eb9f16aebb8944c3bf3cf",
+      "role": "train",
+      "seed_end": 100199,
+      "seed_start": 100000,
+      "source_chunk": "02-train-0100000-0100199"
+    },
+    {
+      "attempt": "attempt-02",
+      "chunk": "03-train-0100200-0100399",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "395c6275b712eaec82db318295857abafbf9d9584ece9e61be03be3e12fd3f98",
+      "role": "train",
+      "seed_end": 100399,
+      "seed_start": 100200,
+      "source_chunk": "03-train-0100200-0100399"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "04-train-0100400-0100599",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "578cb202ae911213754e373df9d069228b98aa8ad110df35ab1df3e161ff212c",
+      "role": "train",
+      "seed_end": 100599,
+      "seed_start": 100400,
+      "source_chunk": "04-train-0100400-0100599"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "05-train-0100600-0100799",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "e8820bda7087f127dbc8eb03d149f6fb149724dccb9df263b12d26b6135cb5e3",
+      "role": "train",
+      "seed_end": 100799,
+      "seed_start": 100600,
+      "source_chunk": "05-train-0100600-0100799"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "06-train-0100800-0100999",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "e621d2d55434290555df0d37a173439e1871fb88617849210c30e2e74466cd31",
+      "role": "train",
+      "seed_end": 100999,
+      "seed_start": 100800,
+      "source_chunk": "06-train-0100800-0100999"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "07-train-0101000-0101199",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "8085c00649082b0e552a37907b9e960157627757dfa241ee3252354f0ec694f3",
+      "role": "train",
+      "seed_end": 101199,
+      "seed_start": 101000,
+      "source_chunk": "07-train-0101000-0101199"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "08-train-0101200-0101399",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "68ede6ad686d60f0fe7bae902eefa0d0ad2076bc376fdde2d1c901a3f6d78271",
+      "role": "train",
+      "seed_end": 101399,
+      "seed_start": 101200,
+      "source_chunk": "08-train-0101200-0101399"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "09-train-0101400-0101599",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "88686e523659f637a6fc5a690561bb6d3d3e3efd05a90376a4760b0a6c85ee58",
+      "role": "train",
+      "seed_end": 101599,
+      "seed_start": 101400,
+      "source_chunk": "09-train-0101400-0101599"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "10-train-0101600-0101799",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "ad3cec96f04774a0c3aef44dd1868939ba937824fd8d20ac153984cb1d3fdf8f",
+      "role": "train",
+      "seed_end": 101799,
+      "seed_start": 101600,
+      "source_chunk": "10-train-0101600-0101799"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "11-train-0101800-0101999",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "da14b46ed859a7c845d4f6aa658cab3ad62d14cb0e1d5a2236fa5f768b3e4544",
+      "role": "train",
+      "seed_end": 101999,
+      "seed_start": 101800,
+      "source_chunk": "11-train-0101800-0101999"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "12-train-0102000-0102199",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "1b0bd523e9c46a4c5a5a412150a2a32427962282640d80ba2843638b28c78a99",
+      "role": "train",
+      "seed_end": 102199,
+      "seed_start": 102000,
+      "source_chunk": "12-train-0102000-0102199"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "13-train-0102200-0102399",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "05ae036530319a849951669d707ca8cfa8ccecd735d02039d2c7fa198141349b",
+      "role": "train",
+      "seed_end": 102399,
+      "seed_start": 102200,
+      "source_chunk": "13-train-0102200-0102399"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "14-train-0102400-0102599",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "ca643b95510a2ba4a5974e3b69c0483a104c333e49d1af7599339c9152c860ba",
+      "role": "train",
+      "seed_end": 102599,
+      "seed_start": 102400,
+      "source_chunk": "14-train-0102400-0102599"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "15-train-0102600-0102799",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "1e860841b1ed87968d03a183e114a9c431e07a214ef5deaa0a9ecc58d6848113",
+      "role": "train",
+      "seed_end": 102799,
+      "seed_start": 102600,
+      "source_chunk": "15-train-0102600-0102799"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "16-train-0102800-0102999",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "d5d773684bc6f1f1f65b4662351ec71fffac9c03ae9fea65f254d872fec6d575",
+      "role": "train",
+      "seed_end": 102999,
+      "seed_start": 102800,
+      "source_chunk": "16-train-0102800-0102999"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "17-test-2100000-2100199",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "68709af0550c80a76aca8389dde26714d3fb7d30114943d3d2c6ddea74024e25",
+      "role": "test",
+      "seed_end": 2100199,
+      "seed_start": 2100000,
+      "source_chunk": "17-test-2100000-2100199"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "18-test-2100200-2100399",
+      "component": "step6",
+      "frame_count": 200,
+      "integrity_passed": true,
+      "manifest_sha256": "b163e9202841bed959550ecb163f2f2d5bb71952672ef30485f53cde99e9461c",
+      "role": "test",
+      "seed_end": 2100399,
+      "seed_start": 2100200,
+      "source_chunk": "18-test-2100200-2100399"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "19-test-2100400-2100499",
+      "component": "step6",
+      "frame_count": 100,
+      "integrity_passed": true,
+      "manifest_sha256": "54c4bb5dac58ec1edecd7df625bf2ecfb3d81b83a4c95e462d2c51cd99fca62f",
+      "role": "test",
+      "seed_end": 2100499,
+      "seed_start": 2100400,
+      "source_chunk": "19-test-2100400-2100499"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "20-train-0104000-0104059",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "48360578e48b5b85fb20769387c3a034565cb65ee3090e8626deee5038531b89",
+      "role": "train",
+      "seed_end": 104059,
+      "seed_start": 104000,
+      "source_chunk": "00-train-0104000-0104059"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "21-train-0104060-0104119",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "57bb3781239d9e31ad2a4b04c6ed97a084dea12168a08a8478c440d5d85b501d",
+      "role": "train",
+      "seed_end": 104119,
+      "seed_start": 104060,
+      "source_chunk": "01-train-0104060-0104119"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "22-train-0104120-0104179",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "168a953048976a71dcc94db0f3d2db56c1accb07ff46c42889d2884b0c4ddf86",
+      "role": "train",
+      "seed_end": 104179,
+      "seed_start": 104120,
+      "source_chunk": "02-train-0104120-0104179"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "23-train-0104180-0104239",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "20c3810fad5d122cad3ca941bc4d1463a3cb918fcaa468f56eda12ed8a37fbbe",
+      "role": "train",
+      "seed_end": 104239,
+      "seed_start": 104180,
+      "source_chunk": "03-train-0104180-0104239"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "24-train-0104240-0104299",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "f2bdad270ccac45af0276c1372a9fde14e71675a03d512e1a8c4758fba2ba21f",
+      "role": "train",
+      "seed_end": 104299,
+      "seed_start": 104240,
+      "source_chunk": "04-train-0104240-0104299"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "25-train-0104300-0104359",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "a0e6e8cb834b8e7d81db79eb2c8ba1361fbdea7fb6fbd804df5c6e844e565059",
+      "role": "train",
+      "seed_end": 104359,
+      "seed_start": 104300,
+      "source_chunk": "05-train-0104300-0104359"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "26-train-0104360-0104419",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "b76d888e099b11568a0063adcd0cfd7927e332dad2f2a8ad94fe00710eba45df",
+      "role": "train",
+      "seed_end": 104419,
+      "seed_start": 104360,
+      "source_chunk": "06-train-0104360-0104419"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "27-train-0104420-0104479",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "26eaafd500059d2a5e26a471b515a4fae9fcf8a9dad6d01632ce090536ca8330",
+      "role": "train",
+      "seed_end": 104479,
+      "seed_start": 104420,
+      "source_chunk": "07-train-0104420-0104479"
+    },
+    {
+      "attempt": "attempt-02",
+      "chunk": "28-val-1101000-1101059",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "2cbbfec19711dba03805f5b7b0b65a4027764c411724e8b719988b9a01798e13",
+      "role": "val",
+      "seed_end": 1101059,
+      "seed_start": 1101000,
+      "source_chunk": "08-val-1101000-1101059"
+    },
+    {
+      "attempt": "attempt-01",
+      "chunk": "29-test-2101000-2101059",
+      "component": "exact_v4",
+      "frame_count": 60,
+      "integrity_passed": true,
+      "manifest_sha256": "752022af8907e0d8ce4b4bae7ae02a1421484a14546cb82b2fa41079cc587724",
+      "role": "test",
+      "seed_end": 2101059,
+      "seed_start": 2101000,
+      "source_chunk": "09-test-2101000-2101059"
+    }
+  ],
+  "components": {
+    "exact_v4": {
+      "expected_role_counts": {
+        "test": 60,
+        "train": 480,
+        "val": 60
+      },
+      "summary_sha256": "e224ca0fcf18c0f833d53d1f1a61422a5067470ff85eaa079514ef9da91774ab"
+    },
+    "step6": {
+      "exception_review_sha256": "6ef12c4adce78e1c5f0fe89c5a37043d19722b003e7232c79f02f2efb366130f",
+      "exception_review_status": "complete",
+      "expected_role_counts": {
+        "test": 500,
+        "train": 3000,
+        "val": 300
+      },
+      "summary_sha256": "e736d17ee7db384fa9b15cadc97422bb095b2a82ef1fb6b879040df0424d88c0"
+    }
+  },
+  "evidence_label": "derived_from_two_integrity_passed_component_summaries",
+  "integrity": {
+    "aggregate_root_contains_test_chunk": false,
+    "complete_chunks": 30,
+    "component_summaries_passed": 2,
+    "errors": [],
+    "linked_manifest_hashes_verified": 26,
+    "linked_train_validation_chunks": 26,
+    "passed": true,
+    "test_chunks_linked": 0
+  },
+  "old_rule_review": {
+    "exception_count": 1,
+    "exceptions": [
+      {
+        "candidate_visibility_factors": [
+          "visible_foam_can_occlude_the_liquid_surface",
+          "visible_sticker_blocks_part_of_the_vial",
+          "sub_ml_volume_can_be_below_the_visible_base_edge"
+        ],
+        "chunk": "03-train-0100200-0100399",
+        "class_pixels": {
+          "blocked": 3411,
+          "empty": 16850,
+          "foam": 1391,
+          "liquid": 0
+        },
+        "component": "step6",
+        "failed_old_rules": [
+          "positive_level_without_visible_liquid"
+        ],
+        "foam": {
+          "enabled": true,
+          "thickness_mm": 3.964286312275849,
+          "visible_in_camera": true
+        },
+        "frame_index": 127,
+        "holder_projection": {
+          "twin_edge_ml": [
+            65.52631578947368,
+            69.52631578947368
+          ],
+          "twin_hidden_ml": [
+            47.434210526315795,
+            65.52631578947368
+          ]
+        },
+        "level_ml": 0.06511742022173861,
+        "manual_disposition": "pending_step7_review",
+        "role": "train",
+        "sampling_band": "full_0_85",
+        "seed": 100327,
+        "sticker": {
+          "blocked_pixels": 672,
+          "present": true,
+          "visible_in_camera": true
+        }
+      }
+    ],
+    "policy": "Before training, verify and disposition every train/validation exception against the fresh aggregate root.",
+    "sealed_test_records_inventoried": 0,
+    "status": "pending_combined_review"
+  },
+  "purpose": "FillCam Step 8 Revision 2 combined synthetic batch summary",
+  "schema_version": 1
+}

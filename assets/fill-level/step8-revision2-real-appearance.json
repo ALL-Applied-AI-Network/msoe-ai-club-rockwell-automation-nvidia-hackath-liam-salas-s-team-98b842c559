@@ -1,0 +1,3123 @@
+{
+  "additional_video5_frames_opened": 0,
+  "brady_label": {
+    "bbox_xyxy_half_open": [
+      285,
+      168,
+      341,
+      240
+    ],
+    "center_xy": [
+      313,
+      204
+    ],
+    "dark_print_fraction_proxy": {
+      "max": 0.153123,
+      "mean": 0.14951,
+      "median": 0.152018,
+      "min": 0.120509,
+      "p05": 0.128441,
+      "p95": 0.153123
+    },
+    "evidence": "manual boundary on the temporal mean of all 28 vial-1 frames",
+    "frame_count": 28,
+    "grayscale_p10": {
+      "max": 0.258824,
+      "mean": 0.23035,
+      "median": 0.227451,
+      "min": 0.226275,
+      "p05": 0.227451,
+      "p95": 0.254706
+    },
+    "grayscale_p25": {
+      "max": 0.419608,
+      "mean": 0.414706,
+      "median": 0.415686,
+      "min": 0.4,
+      "p05": 0.405294,
+      "p95": 0.418235
+    },
+    "grayscale_p50": {
+      "max": 0.564706,
+      "mean": 0.557213,
+      "median": 0.560784,
+      "min": 0.513726,
+      "p05": 0.527059,
+      "p95": 0.562745
+    },
+    "grayscale_p75": {
+      "max": 0.647059,
+      "mean": 0.646359,
+      "median": 0.647059,
+      "min": 0.635294,
+      "p05": 0.643137,
+      "p95": 0.647059
+    },
+    "grayscale_p90": {
+      "max": 0.678431,
+      "mean": 0.677591,
+      "median": 0.678431,
+      "min": 0.662745,
+      "p05": 0.67451,
+      "p95": 0.678431
+    },
+    "height_px": 72,
+    "look": "large white/gray wraparound paper with dense dark logo, text and barcode-like print",
+    "median_rgb": {
+      "b": {
+        "max": 0.552941,
+        "mean": 0.546078,
+        "median": 0.54902,
+        "min": 0.509804,
+        "p05": 0.520392,
+        "p95": 0.552255
+      },
+      "g": {
+        "max": 0.576471,
+        "mean": 0.572409,
+        "median": 0.576471,
+        "min": 0.52549,
+        "p05": 0.542745,
+        "p95": 0.576471
+      },
+      "r": {
+        "max": 0.541176,
+        "mean": 0.533894,
+        "median": 0.537255,
+        "min": 0.490196,
+        "p05": 0.503529,
+        "p95": 0.54049
+      }
+    },
+    "paper_fraction_proxy": {
+      "max": 0.577391,
+      "mean": 0.571399,
+      "median": 0.576147,
+      "min": 0.520453,
+      "p05": 0.537134,
+      "p95": 0.577114
+    },
+    "polygon_xy": [
+      [
+        286,
+        171
+      ],
+      [
+        338,
+        168
+      ],
+      [
+        340,
+        226
+      ],
+      [
+        334,
+        234
+      ],
+      [
+        288,
+        239
+      ],
+      [
+        285,
+        177
+      ]
+    ],
+    "top_edge_roll_degrees": -3.302,
+    "visible_width_fraction_of_model_crop": 0.5,
+    "width_px": 56
+  },
+  "calibration_top_surface_and_foam": {
+    "surface_oval_height_reference_px": [
+      17,
+      24
+    ],
+    "vial_13_80ml": {
+      "evidence": "fixed manual surface/foam band from the review's permitted calibration frames; pixel values are deterministic appearance proxies",
+      "foam_or_specular_bright_fraction_proxy": {
+        "max": 0.179825,
+        "mean": 0.100094,
+        "median": 0.094846,
+        "min": 0.075658,
+        "p05": 0.085526,
+        "p95": 0.120175
+      },
+      "frame_count": 70,
+      "gray_reflective_fraction_proxy": {
+        "max": 0.935307,
+        "mean": 0.893249,
+        "median": 0.894189,
+        "min": 0.85636,
+        "p05": 0.878289,
+        "p95": 0.915406
+      },
+      "height_px": 24,
+      "hue_circular_0_to_1": {
+        "max": 0.357098,
+        "mean": 0.341467,
+        "median": 0.340335,
+        "min": 0.33255,
+        "p05": 0.333223,
+        "p95": 0.354331
+      },
+      "proxy_caveat": "Foam, bubbles and specular reflection are not semantically labeled; these fractions and component counts are appearance proxies only.",
+      "roi_xyxy_half_open": [
+        292,
+        177,
+        330,
+        201
+      ],
+      "saturation": {
+        "max": 0.125512,
+        "mean": 0.103696,
+        "median": 0.104956,
+        "min": 0.084903,
+        "p05": 0.091475,
+        "p95": 0.115488
+      },
+      "small_bright_component_count_proxy": {
+        "max": 7.0,
+        "mean": 2.628571,
+        "median": 2.0,
+        "min": 2.0,
+        "p05": 2.0,
+        "p95": 5.0
+      },
+      "texture_laplacian_variance_8bit": {
+        "max": 897.651794,
+        "mean": 217.179913,
+        "median": 155.301689,
+        "min": 112.178345,
+        "p05": 121.291766,
+        "p95": 463.721524
+      },
+      "value": {
+        "max": 0.246964,
+        "mean": 0.219261,
+        "median": 0.21735,
+        "min": 0.213751,
+        "p05": 0.214204,
+        "p95": 0.227824
+      }
+    },
+    "vial_1_30ml": {
+      "evidence": "fixed manual surface/foam band from the review's permitted calibration frames; pixel values are deterministic appearance proxies",
+      "foam_or_specular_bright_fraction_proxy": {
+        "max": 0.012384,
+        "mean": 0.010504,
+        "median": 0.010836,
+        "min": 0.0,
+        "p05": 0.001625,
+        "p95": 0.012384
+      },
+      "frame_count": 28,
+      "gray_reflective_fraction_proxy": {
+        "max": 0.021672,
+        "mean": 0.019184,
+        "median": 0.01935,
+        "min": 0.00774,
+        "p05": 0.011455,
+        "p95": 0.021672
+      },
+      "height_px": 17,
+      "hue_circular_0_to_1": {
+        "max": 0.407294,
+        "mean": 0.388982,
+        "median": 0.389645,
+        "min": 0.381268,
+        "p05": 0.381268,
+        "p95": 0.397088
+      },
+      "proxy_caveat": "Foam, bubbles and specular reflection are not semantically labeled; these fractions and component counts are appearance proxies only.",
+      "roi_xyxy_half_open": [
+        292,
+        329,
+        330,
+        346
+      ],
+      "saturation": {
+        "max": 0.417987,
+        "mean": 0.404688,
+        "median": 0.402677,
+        "min": 0.37848,
+        "p05": 0.398729,
+        "p95": 0.414757
+      },
+      "small_bright_component_count_proxy": {
+        "max": 1.0,
+        "mean": 0.928571,
+        "median": 1.0,
+        "min": 0.0,
+        "p05": 0.35,
+        "p95": 1.0
+      },
+      "texture_laplacian_variance_8bit": {
+        "max": 39.952595,
+        "mean": 28.631452,
+        "median": 28.314384,
+        "min": 8.57312,
+        "p05": 16.431262,
+        "p95": 39.873587
+      },
+      "value": {
+        "max": 0.17264,
+        "mean": 0.171241,
+        "median": 0.171657,
+        "min": 0.162429,
+        "p05": 0.16677,
+        "p95": 0.17264
+      }
+    }
+  },
+  "evidence_label": "measured_real_appearance_without_real_model_training",
+  "external_reference_sample": {
+    "provenance": {
+      "allowed_video_ids": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "candidate_fractions_within_nominal_cycle": [
+        0.8,
+        0.95
+      ],
+      "candidate_image_count_hashed_before_first_decode": 136,
+      "candidate_pair_count": 68,
+      "candidate_pairs": [
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 1,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170518_580294.jpg",
+            "sha256": "85d7c4c0ea5f358af138df28d93ae44226d264ee7defe67e9cfa9921de504520"
+          },
+          "timestamp": "2026-09-22 17:05:18.580294",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170518_580294.jpg",
+            "sha256": "dda1364e37c9588524b86c9f118ff3c56752e2b7eda080766e2d9088df79d2ad"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 1,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170526_617910.jpg",
+            "sha256": "da15ac0c276c320c029252d8b196a3afc4bd3a95eeecbf47a8223f2cba7a208d"
+          },
+          "timestamp": "2026-09-22 17:05:26.617910",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170526_617910.jpg",
+            "sha256": "e150dd7f7c560a26e97f0fc508ffcf232eeeac5df014186a653e02ce8d5686e7"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 2,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170616_819095.jpg",
+            "sha256": "0cbe37a2a1ba206e65626ec4e4e411181fb3a0e6742e15bdcc9beee3f9798a34"
+          },
+          "timestamp": "2026-09-22 17:06:16.819095",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170616_819095.jpg",
+            "sha256": "6531e17898c737841c5e3d0957e037c878d20c0ccc45c57fc407a627712a8f46"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 2,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170624_853824.jpg",
+            "sha256": "122383e34bdeb3582b874993d27ea56464b802d2ab7aced02d951bdd2d48a950"
+          },
+          "timestamp": "2026-09-22 17:06:24.853824",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170624_853824.jpg",
+            "sha256": "86b4b8afa173752cf245a4f282fca8f8df6c96a3700582f34c0fe9a8768235f0"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 3,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170717_068128.jpg",
+            "sha256": "44d2631e2b85078a8e3776ece05fe182a1122d77e8b9eca253cb2add86f31d8d"
+          },
+          "timestamp": "2026-09-22 17:07:17.068128",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170717_068128.jpg",
+            "sha256": "5be46ba065d2282cbcf03a235f40bb1d4dd3a0402b96418d84290737a369781e"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 3,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170725_098652.jpg",
+            "sha256": "24b893af44cc85a6ac2bd84e3056976396a7001e425b4a5f63dc3473a493ae67"
+          },
+          "timestamp": "2026-09-22 17:07:25.098652",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170725_098652.jpg",
+            "sha256": "3c1c69cc16727cad925f26611047e9a148dfb11ff22246054c395143fa9bc34a"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 4,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170815_290583.jpg",
+            "sha256": "754dab92a9a1d617a55b0443438667bb2e311f9578b4ca2fcb9ca0b9a2e2f4d3"
+          },
+          "timestamp": "2026-09-22 17:08:15.290583",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170815_290583.jpg",
+            "sha256": "8715c4a7b991dd8d09cb0fd53bffd8c0638f6c4c36884abad2a54446fd766a62"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 4,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170823_330404.jpg",
+            "sha256": "c9176fb12677e8f3fdd0d2a19980577d60ac25724a7967cd1a3dfd897bf41347"
+          },
+          "timestamp": "2026-09-22 17:08:23.330404",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170823_330404.jpg",
+            "sha256": "ca0eb02f67560d6b83839dd947c93178ca8137260d44f3dd35da350f53121d5c"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 5,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170913_550701.jpg",
+            "sha256": "136b9c30087bb06310e8b91fc4a68b3e0ad88faa9dff753e04267062e1412322"
+          },
+          "timestamp": "2026-09-22 17:09:13.550701",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170913_550701.jpg",
+            "sha256": "f83e740bed44cdf823d7712bff00ef9888671407aeec67c755c97e4a6dd4b13d"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 5,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_170921_574196.jpg",
+            "sha256": "dcd9ccce69d85ab517606f7e8b24a6153321c58fc00b8650cfaf0c967b762d17"
+          },
+          "timestamp": "2026-09-22 17:09:21.574196",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_170921_574196.jpg",
+            "sha256": "7f1a0aef800aa31b603c1bdf8c86c923143c14fbc50c78157a3e6ecdca2ab014"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 6,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171013_841637.jpg",
+            "sha256": "5f308a997884d419e0ef591b602b76a6075f76f596448353244b9a00fd028562"
+          },
+          "timestamp": "2026-09-22 17:10:13.841637",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171013_841637.jpg",
+            "sha256": "416e49dadba604c1e16c7b1b634388be25fca1a47268971550784a2e01ee21b5"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 6,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171021_871237.jpg",
+            "sha256": "3ae307747c4f39681a612ea54d788a9fc80e2ba45d9262259bccc85245e77ebe"
+          },
+          "timestamp": "2026-09-22 17:10:21.871237",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171021_871237.jpg",
+            "sha256": "608951959f3b29b2c7eb501803318a3c0263b7bea74c379fa17914c9a60aae67"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 7,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171112_088200.jpg",
+            "sha256": "284ee3417b094ea91fb9e8d6d17bf5cd6395bdd59637e780c17bbdd73ac78790"
+          },
+          "timestamp": "2026-09-22 17:11:12.088200",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171112_088200.jpg",
+            "sha256": "243bb7137823282fc6f70a816f10be001abd4ca064d99cdfa25b05f794bd3b24"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 7,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171120_110019.jpg",
+            "sha256": "b429522e9a74016008c575f5881694c7fabfdc8cea62fdb3a7340ae1a233d88e"
+          },
+          "timestamp": "2026-09-22 17:11:20.110019",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171120_110019.jpg",
+            "sha256": "c52e5b16bd8e5bd7cc9a5e0e3055b1538d91f7f406374ab106181ab37eb66d40"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 8,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171210_302886.jpg",
+            "sha256": "b03b5fd9bb1510e31242622aa75fb89381c4ab9d75fada32c767718a25d0155a"
+          },
+          "timestamp": "2026-09-22 17:12:10.302886",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171210_302886.jpg",
+            "sha256": "0f3897a2c7e6b2113db73c956af3a799799b193465f85ecf0900e220d0e4f01b"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 8,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171218_327706.jpg",
+            "sha256": "9a9ab953f24d8a5e357453728d0538b550974d51bf6bca3d3230734665eb66ac"
+          },
+          "timestamp": "2026-09-22 17:12:18.327706",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171218_327706.jpg",
+            "sha256": "0a1df4b18514b33e400cb8cdeae895f84e54982bb7d02f48825132b12b07d2e9"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 9,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171310_519450.jpg",
+            "sha256": "36a98e9827de4e1c55b6b1de19eded2698420a755ebd3c562fd7e2dff41f8192"
+          },
+          "timestamp": "2026-09-22 17:13:10.519450",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171310_519450.jpg",
+            "sha256": "860130012cb1c25c6ad7438ef5ca4ee70c6adcfce380cad078c4a578a34af31c"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 9,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171318_569914.jpg",
+            "sha256": "6e2479f8e91c3828411ab0c324c848a91085aaa5c104edd2ddefb8cbda4fde37"
+          },
+          "timestamp": "2026-09-22 17:13:18.569914",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171318_569914.jpg",
+            "sha256": "6e883734751271623dfe6b7fa286ea30b4562ba013f4a0febcb89e9359808a70"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 10,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171408_718398.jpg",
+            "sha256": "f091ff5e40a5df084f02a85b3bd87278e2e15ffaf36101324a5a10383c383a5b"
+          },
+          "timestamp": "2026-09-22 17:14:08.718398",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171408_718398.jpg",
+            "sha256": "7e6f9d68ef0e37d5c0cd0970747250f100da31ed6989cf622e554fc78c4b375a"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 10,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171416_744503.jpg",
+            "sha256": "90843a189ceea54f6c59f6431894233eb6b22c81c6a5050b4024c6e4b80eb38b"
+          },
+          "timestamp": "2026-09-22 17:14:16.744503",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171416_744503.jpg",
+            "sha256": "e93cb9bffaaf505cf63816da21b4f36dc8c5f69a9a5495cb46c4e66b704cbbe9"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 11,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171508_975754.jpg",
+            "sha256": "ddc17dec4ae7724921d7e5909baa73e34444fadb921748f63740f1f2d0264135"
+          },
+          "timestamp": "2026-09-22 17:15:08.975754",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171508_975754.jpg",
+            "sha256": "96ccba9549ab46550be1968393d8f82dec960cdd48836020f104986fdad0dba0"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 11,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171517_019919.jpg",
+            "sha256": "1cd758de5d9b72927d8dcaf194fe40886e99126956030404a507f296ac30dde4"
+          },
+          "timestamp": "2026-09-22 17:15:17.019919",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171517_019919.jpg",
+            "sha256": "310a4196ded200cf79d0492d8241447df23be1a4ee384955624d73850a97f339"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 12,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171607_272830.jpg",
+            "sha256": "c490664d98a4ae845e4a8fd7f49e22eef5390ab48b329f446be628a1fbd11f76"
+          },
+          "timestamp": "2026-09-22 17:16:07.272830",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171607_272830.jpg",
+            "sha256": "84f66424c35036f45ec712bfe8d28e29b77a8e173ab7354aa86ff08804e32d1c"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 12,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171615_303462.jpg",
+            "sha256": "218f3c3117e596ba63be24474c85a853da99880d279c12b648e3c3a4f6efe7c0"
+          },
+          "timestamp": "2026-09-22 17:16:15.303462",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171615_303462.jpg",
+            "sha256": "2da8d9bbb1afa20a0e93c9f889e58205650b26f33f411f508ac59234c236124c"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 13,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171705_528248.jpg",
+            "sha256": "dbbc020f9337a4fc2af1ffbcc3a86bc48a203fd2ab25270cc3bdc475ce9709e4"
+          },
+          "timestamp": "2026-09-22 17:17:05.528248",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171705_528248.jpg",
+            "sha256": "28b811e9b6c8d7c62b4fdc00abc3007cde0257259833c61bf2a3821b58ca59c2"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 13,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171713_581494.jpg",
+            "sha256": "f26f49a7e25f7c959e2da6c03312545047c58a84395763848bc4d07cc871a0b4"
+          },
+          "timestamp": "2026-09-22 17:17:13.581494",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171713_581494.jpg",
+            "sha256": "c7fd40c3b40d2ff992af774a7a008fcd36b4aa581e95811ccd21299efb9ae94e"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 14,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171805_852100.jpg",
+            "sha256": "e160394cf1e138e69848378eab3fbe15c57011e7ced3ee33ea79cb94a2dbd418"
+          },
+          "timestamp": "2026-09-22 17:18:05.852100",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171805_852100.jpg",
+            "sha256": "c8fb495fc924c994fcb2ce22f14f6a8f17192d0811f3f7d33964a8ee1f8ebcec"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 14,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171813_886696.jpg",
+            "sha256": "928b19c5706c4fbb189cf4ec4cbf2c08ebc6889747233df81d27e2d3382ac050"
+          },
+          "timestamp": "2026-09-22 17:18:13.886696",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171813_886696.jpg",
+            "sha256": "3d22b98e264862ed63bbab322312c89b982dc88350ffb5db2074496ae0cdf412"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 15,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171904_129261.jpg",
+            "sha256": "f844dfdf3322c308768e23dc4d6f4c6650a0e09249570b99830fd06c16159e9c"
+          },
+          "timestamp": "2026-09-22 17:19:04.129261",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171904_129261.jpg",
+            "sha256": "e1dc34bd34b71a2eccb8fc613645fa682c10eecec6922dcf846e2ffea3ca2fa2"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 15,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_171912_172990.jpg",
+            "sha256": "d620b84afd4d501f1b82e01a8ac6c99d1158cb10c2c72aede4c54469a4b2b8dc"
+          },
+          "timestamp": "2026-09-22 17:19:12.172990",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_171912_172990.jpg",
+            "sha256": "381a04510cd00d5de9f14ae0b167095b03a8acef7d0555278235d93b6b107b80"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 16,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_172002_417862.jpg",
+            "sha256": "d6847323ff5cb10177b6d2d87c6d63158d61dba3d2cb5346c2775e77dd0216ea"
+          },
+          "timestamp": "2026-09-22 17:20:02.417862",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_172002_417862.jpg",
+            "sha256": "9cce5bb6fb98b7699c1bac7d1079631c97cad8583bbd81c2413ef81835aa259d"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 16,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_172010_462368.jpg",
+            "sha256": "7ae43c9ada3c84085f03d80718837e38525586417e101e6f2a324f457d4a86eb"
+          },
+          "timestamp": "2026-09-22 17:20:10.462368",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_172010_462368.jpg",
+            "sha256": "4ad1e98075dd6167fb32e8892bb3174d2789eb96c803da5f5d87a7386550f211"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 17,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_172102_707580.jpg",
+            "sha256": "3f74304edcece2c2f673cf2a5938fda34dfd9547e5a536c1315734e1248957f6"
+          },
+          "timestamp": "2026-09-22 17:21:02.707580",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_172102_707580.jpg",
+            "sha256": "4fa4ea566c9b75d9f579ece42e57027ce9018f7f503d48207fdcfd30330aaa81"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 17,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_172110_739753.jpg",
+            "sha256": "49b5b09e3ec807c42cb2ae4b27b93e5cfa2590bc0d0b78bf01d91d02cfe83da4"
+          },
+          "timestamp": "2026-09-22 17:21:10.739753",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_172110_739753.jpg",
+            "sha256": "baac965ca13e6273eb9341c1a6ca575c3cd5200ca861e7669d196e043c331c50"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 18,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_172200_981522.jpg",
+            "sha256": "925fbd882db8a462b87e2af193d82fe516721dc0502d90e7edd932c45c047d97"
+          },
+          "timestamp": "2026-09-22 17:22:00.981522",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_172200_981522.jpg",
+            "sha256": "50d0e09fa5c67f84fc50b6555712008482dcf67ed0ee45f23cbce5662414101e"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 18,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_172209_016714.jpg",
+            "sha256": "50ef365d110f0791d24ebd399c8db3c3a35bffd10030834025291938d8df70f1"
+          },
+          "timestamp": "2026-09-22 17:22:09.016714",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_172209_016714.jpg",
+            "sha256": "6ee27a14504f67187b40bbbc336b2b3a6f6b7bbdf1b7a89363140fc6fbd43e23"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 19,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_172301_280004.jpg",
+            "sha256": "c6a8c65aa58c3bcaa3c59a978facdbcd7872a067db43fb7655c4e37d4f456d33"
+          },
+          "timestamp": "2026-09-22 17:23:01.280004",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_172301_280004.jpg",
+            "sha256": "f3b3085d34eeeace3b0ae97127a3fdf7379081de9f448deb6b32ec16e3a9d8b1"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 19,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_172309_316875.jpg",
+            "sha256": "24a1eff68492f1b7c9eafd012bf8381a4fab89ee50b6551d5c14410b0f2f139c"
+          },
+          "timestamp": "2026-09-22 17:23:09.316875",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_172309_316875.jpg",
+            "sha256": "6cfc416ea59da1db9740b6cf6ae68bdf9197b53d49e64064bcd1e8c31a1ca1bf"
+          },
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 1,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_192649_347914.jpg",
+            "sha256": "846cd19b27032a966a6591aabaf1a453be5ae7360f737b97d8036ec2d975760c"
+          },
+          "timestamp": "2026-09-22 19:26:49.347914",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_192649_347914.jpg",
+            "sha256": "a85b24daf174d03e316a103b87f46eaf6f4d0252ac6fcde9d519f85efc41f438"
+          },
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 1,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_192657_385060.jpg",
+            "sha256": "a9cbed4d3caf54478d9e357d94bd39679dddc515c0b6fb3109487af589e39642"
+          },
+          "timestamp": "2026-09-22 19:26:57.385060",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_192657_385060.jpg",
+            "sha256": "9662eb3322f0c16a09a8a18ec3a850b06f18f41b56fabe26ca2870ed274b64bf"
+          },
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 2,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_192741_666577.jpg",
+            "sha256": "fb33dc729fef4f92875b71f953d348c3c90d196c4225be380247c6caff49d01b"
+          },
+          "timestamp": "2026-09-22 19:27:41.666577",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_192741_666577.jpg",
+            "sha256": "3c4a5c6d033a89a140c480b467b861482256e42b224bfa3aceea3dcaf38a6852"
+          },
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 2,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_192749_716846.jpg",
+            "sha256": "af6e68f4b6645f72edd7a6418665c6dfff8fee77199982849ea62baf70201e0e"
+          },
+          "timestamp": "2026-09-22 19:27:49.716846",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_192749_716846.jpg",
+            "sha256": "7d9e1d585465f9c1a032c3f29c0a95843a24a9236e2e4578b2b4ae45451993b2"
+          },
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 3,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_192833_934382.jpg",
+            "sha256": "804611971dbe167057561f53adb6668941b7c17d993e4ce62f7d49143489ba3c"
+          },
+          "timestamp": "2026-09-22 19:28:33.934382",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_192833_934382.jpg",
+            "sha256": "bc8575ba97d84042de1364e36789e227a46bfdd9e176643f6f7c09674f510257"
+          },
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 3,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260922_192841_976027.jpg",
+            "sha256": "4608efeef51bc00137f0fe0be25607ef63107551bea0b1dffc83773a1030f8ad"
+          },
+          "timestamp": "2026-09-22 19:28:41.976027",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260922_192841_976027.jpg",
+            "sha256": "4efd1b65ada96a15fd96878ab13110e0660a3bf1dd75d5800571923ee6365a0d"
+          },
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 1,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184654_684520.jpg",
+            "sha256": "02e7696ece72b51a2a8be65f116b192942a18038ad42c5d72c35e0629bec61ef"
+          },
+          "timestamp": "2026-09-23 18:46:54.684520",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184654_684520.jpg",
+            "sha256": "f2fddf14f3133e239ceb0339c50aa270d20ee21f8be5770ee4487e045a213b0e"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 1,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184658_709519.jpg",
+            "sha256": "17f83a277a86ea4522c6c25856dc9cdd5f2d78e1323a64667f6daab1349942d1"
+          },
+          "timestamp": "2026-09-23 18:46:58.709519",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184658_709519.jpg",
+            "sha256": "40e36abcfe4f182d9ee80a87c1e54e3c6a2841e8dc3f3327cbc17fa2054e8e25"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 2,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184724_833088.jpg",
+            "sha256": "4a289764e7e2df8d176db9e72fc5b03b85651f2d825387a82aa46ff10772d585"
+          },
+          "timestamp": "2026-09-23 18:47:24.833088",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184724_833088.jpg",
+            "sha256": "b6e5d8b995c1f9a37bc1ed276773383d85d8a8a4d59d97b54965f68257ce7dab"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 2,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184730_854437.jpg",
+            "sha256": "0a8a965dba16c9ea3196e737c069ae8feb1323e215a8d19927429d58fd9de4c2"
+          },
+          "timestamp": "2026-09-23 18:47:30.854437",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184730_854437.jpg",
+            "sha256": "9c94701e37e12949342fdd68a55a197faff34335216983df1991f4626c283dd2"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 3,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184757_005377.jpg",
+            "sha256": "718ff03ba563067d156051aa863aad2257f674676f7a4a3ea8c5b21fd5e2987c"
+          },
+          "timestamp": "2026-09-23 18:47:57.005377",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184757_005377.jpg",
+            "sha256": "76bd1e8fbb5e5892e23353bfc7670e468ec728ae7206e2dd571603a6903157f7"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 3,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184803_047414.jpg",
+            "sha256": "d8498181280392b83ef018b030a8bf8ac9b5f016a198483ffbf47553c96fa2ee"
+          },
+          "timestamp": "2026-09-23 18:48:03.047414",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184803_047414.jpg",
+            "sha256": "f121a2869a043b55afade933a0fec9cbd64225585d2b3d6f5b8fca5f46b041c3"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 4,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184829_174514.jpg",
+            "sha256": "9d65906b002e5aea6d18d3362d62a68fc04f228aea64ec1cf0abcce140afe7d9"
+          },
+          "timestamp": "2026-09-23 18:48:29.174514",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184829_174514.jpg",
+            "sha256": "8f6bb9bb6c9412cc30032ced8fee24dbcf65b3402852d0db08fffeedc3f8c35d"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 4,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184835_215278.jpg",
+            "sha256": "d9f34530ab8eb20178368ef321f10fbeea799784525646939b231b01f85e5ee0"
+          },
+          "timestamp": "2026-09-23 18:48:35.215278",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184835_215278.jpg",
+            "sha256": "b3e5925accaed172f297f06bb6ef9a2eb2afcc1af1d56dc82c3dad80b8f855bb"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 5,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184901_348582.jpg",
+            "sha256": "4be397b82a48472e2d502de217758728375128033287a18d6d8fdceb79d1b9ce"
+          },
+          "timestamp": "2026-09-23 18:49:01.348582",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184901_348582.jpg",
+            "sha256": "362078dc529cc5ee3d9e6e3a04c58413bc70c8a7a9ded5b0bced51caf3757ccf"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 5,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184907_384046.jpg",
+            "sha256": "0894f7452bbae92271a8800b78a180f9a8bae83c71c7e79d12f738e582aed701"
+          },
+          "timestamp": "2026-09-23 18:49:07.384046",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184907_384046.jpg",
+            "sha256": "4f61675ba12fe15666594461fd3618ed52eaf36e2d8c38b9a8752bf591297388"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 6,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184933_529405.jpg",
+            "sha256": "6afc9464bde1d669eb17947042ab1ffb956c724d32f10a2376cc703fa2cae6b7"
+          },
+          "timestamp": "2026-09-23 18:49:33.529405",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184933_529405.jpg",
+            "sha256": "8914c572bc5f2743b71df6894a5c09e3d84aac815d83a6677cb577006b34c6fc"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 6,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_184939_562819.jpg",
+            "sha256": "f8085596ba5ef67f63347e5f89fd7d74e2cd09010a76704b51f60bfc7f1f8f3a"
+          },
+          "timestamp": "2026-09-23 18:49:39.562819",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_184939_562819.jpg",
+            "sha256": "f8e259ac223153446521a6f4d4e4bcb0bdbaf7f731b42b8d4cdad976860106ba"
+          },
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 1,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191057_804865.jpg",
+            "sha256": "1ac962b508f9118f3afa45f404636941d5eba59abeec87b6afbdb68807ba20e8"
+          },
+          "timestamp": "2026-09-23 19:10:57.804865",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191057_804865.jpg",
+            "sha256": "a62b4ec3b41239a59562c85f665d93a93e23b0840546e85b600f1db72cc1942e"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 1,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191105_851913.jpg",
+            "sha256": "7a53308646857f61a75010d30377c90e2af95fcea88d2745c503a682d1324b3d"
+          },
+          "timestamp": "2026-09-23 19:11:05.851913",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191105_851913.jpg",
+            "sha256": "26540880c5d065d58f5805bebef2e6dc0994e1c6868110eda348363962fecbce"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 2,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191150_105709.jpg",
+            "sha256": "d2f4bbc1ece2fdfd7b8834f30b4b8748a54f68b25120edfc0682ef1d55a9f630"
+          },
+          "timestamp": "2026-09-23 19:11:50.105709",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191150_105709.jpg",
+            "sha256": "a196cc1757919720aca9c5098139c04fcd6d04b4db43c3863d5c2a33128a6a0e"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 2,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191158_158845.jpg",
+            "sha256": "72ac60d284c6e66e4363f7023b9e875e6201366c3d91778a191f5ead6786b8e3"
+          },
+          "timestamp": "2026-09-23 19:11:58.158845",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191158_158845.jpg",
+            "sha256": "1276b074c981642478cd50fa6e62173208f5881e5fee4fc1fa905bfbe1daebaa"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 3,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191242_422828.jpg",
+            "sha256": "a40776f24280a919540aa93b90ddf5a65921e8f4b231ab3285d5443a03fcebcd"
+          },
+          "timestamp": "2026-09-23 19:12:42.422828",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191242_422828.jpg",
+            "sha256": "d359e57491e7a2019aaf2bfbdd7aed8a9e45e0f8179a4f63ae9f957e6a3a8094"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 3,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191250_477702.jpg",
+            "sha256": "b0f3fe8f69be7ce27aa8cebdb9dad301e943d5d3003aaa4a63eecd39f9f2e261"
+          },
+          "timestamp": "2026-09-23 19:12:50.477702",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191250_477702.jpg",
+            "sha256": "be032cef30d99938fe5fb4c42b3001ade48e3a42cd63eb6ff8adbabc0cb92b31"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 4,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191334_710719.jpg",
+            "sha256": "f95a79957277870a8e9e03038eb7a0db681114132559058feb6572afd171e0d3"
+          },
+          "timestamp": "2026-09-23 19:13:34.710719",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191334_710719.jpg",
+            "sha256": "bf303075243a182bf08abaeb4d3e9ea5b72b2c7f5fcbe8bc85fd125854930aa1"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 4,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191342_755431.jpg",
+            "sha256": "591442b7f2b902b49fde1e23a0a3ec17ddd5de77ce9c014e13c3906b3c647910"
+          },
+          "timestamp": "2026-09-23 19:13:42.755431",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191342_755431.jpg",
+            "sha256": "958e61e7d0ccdcaaa06872a0f57dff63c71d164b524146c652502589e568c0c3"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 5,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191426_953849.jpg",
+            "sha256": "d29bbbddaf933f8ade4bd3c58d0bfe9e6745be813393cb1bf1bba6a1b0892cd0"
+          },
+          "timestamp": "2026-09-23 19:14:26.953849",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191426_953849.jpg",
+            "sha256": "4411702bff56d7e1a087458708232ec92eb21d3948a1a188ab9f8960e95404f9"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 5,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191434_999506.jpg",
+            "sha256": "2133b86253acce2fea3017e9eb30cf31129216a2555ed425a34ea95375abf729"
+          },
+          "timestamp": "2026-09-23 19:14:34.999506",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191434_999506.jpg",
+            "sha256": "56562b6f6ab3ef66e4782a0ebe5b4c23b492a71945cd17ec106508695f8b0aad"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 6,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191521_256759.jpg",
+            "sha256": "80fd297829d98fa4a0b211a285c2d0e973e71e2bbb218e22d8843fc4ff2904dd"
+          },
+          "timestamp": "2026-09-23 19:15:21.256759",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191521_256759.jpg",
+            "sha256": "b81f33778cf2911215acf3e4c7245d29055e97a29ec8c21181b0b94bfb954d3a"
+          },
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 6,
+          "tank_level": {
+            "path": "tank_level/images/tank_level_20260923_191529_304720.jpg",
+            "sha256": "bfb5c5ba1d176ee44deb58f09e888f886d7841b24de5a77bbb7417bff23b778e"
+          },
+          "timestamp": "2026-09-23 19:15:29.304720",
+          "vial_fill": {
+            "path": "vial_fill/images/vial_fill_20260923_191529_304720.jpg",
+            "sha256": "8ecc30b5c82a2da39949288f72147307e331d1a2ff45dcc955f8a554a2c5820d"
+          },
+          "video_id": 4
+        }
+      ],
+      "csv_sha256": {
+        "tank_level/image_index.csv": "2bdbe4176ec19640af2caf4cae73b8c2397e4b78d684c46bb9d399841c3fc53a",
+        "vial_fill/image_index.csv": "f531c17b9ddb24d15e6277f5b85d3e651aa71117ca162add2bd7b1e2102f069c",
+        "videos.csv": "8f7857d9bc507bcb959e9482b8d6acc42489cfeda0afffc8a76393e3c50b7723"
+      },
+      "forbidden_video_ids": [
+        5
+      ],
+      "root_name": "csi-vial-fill-dataset",
+      "selected_pair_count": 34,
+      "selected_pairs": [
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 1,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_170526_617910.jpg",
+          "tank_level_sha256": "da15ac0c276c320c029252d8b196a3afc4bd3a95eeecbf47a8223f2cba7a208d",
+          "timestamp": "2026-09-22 17:05:26.617910",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_170526_617910.jpg",
+          "vial_fill_sha256": "e150dd7f7c560a26e97f0fc508ffcf232eeeac5df014186a653e02ce8d5686e7",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 2,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_170624_853824.jpg",
+          "tank_level_sha256": "122383e34bdeb3582b874993d27ea56464b802d2ab7aced02d951bdd2d48a950",
+          "timestamp": "2026-09-22 17:06:24.853824",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_170624_853824.jpg",
+          "vial_fill_sha256": "86b4b8afa173752cf245a4f282fca8f8df6c96a3700582f34c0fe9a8768235f0",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 3,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_170717_068128.jpg",
+          "tank_level_sha256": "44d2631e2b85078a8e3776ece05fe182a1122d77e8b9eca253cb2add86f31d8d",
+          "timestamp": "2026-09-22 17:07:17.068128",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_170717_068128.jpg",
+          "vial_fill_sha256": "5be46ba065d2282cbcf03a235f40bb1d4dd3a0402b96418d84290737a369781e",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 4,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_170823_330404.jpg",
+          "tank_level_sha256": "c9176fb12677e8f3fdd0d2a19980577d60ac25724a7967cd1a3dfd897bf41347",
+          "timestamp": "2026-09-22 17:08:23.330404",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_170823_330404.jpg",
+          "vial_fill_sha256": "ca0eb02f67560d6b83839dd947c93178ca8137260d44f3dd35da350f53121d5c",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 5,
+          "settled_proxy_pass": false,
+          "tank_level_path": "tank_level/images/tank_level_20260922_170921_574196.jpg",
+          "tank_level_sha256": "dcd9ccce69d85ab517606f7e8b24a6153321c58fc00b8650cfaf0c967b762d17",
+          "timestamp": "2026-09-22 17:09:21.574196",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_170921_574196.jpg",
+          "vial_fill_sha256": "7f1a0aef800aa31b603c1bdf8c86c923143c14fbc50c78157a3e6ecdca2ab014",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 6,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171013_841637.jpg",
+          "tank_level_sha256": "5f308a997884d419e0ef591b602b76a6075f76f596448353244b9a00fd028562",
+          "timestamp": "2026-09-22 17:10:13.841637",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171013_841637.jpg",
+          "vial_fill_sha256": "416e49dadba604c1e16c7b1b634388be25fca1a47268971550784a2e01ee21b5",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 7,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171112_088200.jpg",
+          "tank_level_sha256": "284ee3417b094ea91fb9e8d6d17bf5cd6395bdd59637e780c17bbdd73ac78790",
+          "timestamp": "2026-09-22 17:11:12.088200",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171112_088200.jpg",
+          "vial_fill_sha256": "243bb7137823282fc6f70a816f10be001abd4ca064d99cdfa25b05f794bd3b24",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 8,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171218_327706.jpg",
+          "tank_level_sha256": "9a9ab953f24d8a5e357453728d0538b550974d51bf6bca3d3230734665eb66ac",
+          "timestamp": "2026-09-22 17:12:18.327706",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171218_327706.jpg",
+          "vial_fill_sha256": "0a1df4b18514b33e400cb8cdeae895f84e54982bb7d02f48825132b12b07d2e9",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 9,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171318_569914.jpg",
+          "tank_level_sha256": "6e2479f8e91c3828411ab0c324c848a91085aaa5c104edd2ddefb8cbda4fde37",
+          "timestamp": "2026-09-22 17:13:18.569914",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171318_569914.jpg",
+          "vial_fill_sha256": "6e883734751271623dfe6b7fa286ea30b4562ba013f4a0febcb89e9359808a70",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 10,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171408_718398.jpg",
+          "tank_level_sha256": "f091ff5e40a5df084f02a85b3bd87278e2e15ffaf36101324a5a10383c383a5b",
+          "timestamp": "2026-09-22 17:14:08.718398",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171408_718398.jpg",
+          "vial_fill_sha256": "7e6f9d68ef0e37d5c0cd0970747250f100da31ed6989cf622e554fc78c4b375a",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 11,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171517_019919.jpg",
+          "tank_level_sha256": "1cd758de5d9b72927d8dcaf194fe40886e99126956030404a507f296ac30dde4",
+          "timestamp": "2026-09-22 17:15:17.019919",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171517_019919.jpg",
+          "vial_fill_sha256": "310a4196ded200cf79d0492d8241447df23be1a4ee384955624d73850a97f339",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 12,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171607_272830.jpg",
+          "tank_level_sha256": "c490664d98a4ae845e4a8fd7f49e22eef5390ab48b329f446be628a1fbd11f76",
+          "timestamp": "2026-09-22 17:16:07.272830",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171607_272830.jpg",
+          "vial_fill_sha256": "84f66424c35036f45ec712bfe8d28e29b77a8e173ab7354aa86ff08804e32d1c",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 13,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171705_528248.jpg",
+          "tank_level_sha256": "dbbc020f9337a4fc2af1ffbcc3a86bc48a203fd2ab25270cc3bdc475ce9709e4",
+          "timestamp": "2026-09-22 17:17:05.528248",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171705_528248.jpg",
+          "vial_fill_sha256": "28b811e9b6c8d7c62b4fdc00abc3007cde0257259833c61bf2a3821b58ca59c2",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 14,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171813_886696.jpg",
+          "tank_level_sha256": "928b19c5706c4fbb189cf4ec4cbf2c08ebc6889747233df81d27e2d3382ac050",
+          "timestamp": "2026-09-22 17:18:13.886696",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171813_886696.jpg",
+          "vial_fill_sha256": "3d22b98e264862ed63bbab322312c89b982dc88350ffb5db2074496ae0cdf412",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 15,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_171912_172990.jpg",
+          "tank_level_sha256": "d620b84afd4d501f1b82e01a8ac6c99d1158cb10c2c72aede4c54469a4b2b8dc",
+          "timestamp": "2026-09-22 17:19:12.172990",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_171912_172990.jpg",
+          "vial_fill_sha256": "381a04510cd00d5de9f14ae0b167095b03a8acef7d0555278235d93b6b107b80",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 16,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_172010_462368.jpg",
+          "tank_level_sha256": "7ae43c9ada3c84085f03d80718837e38525586417e101e6f2a324f457d4a86eb",
+          "timestamp": "2026-09-22 17:20:10.462368",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_172010_462368.jpg",
+          "vial_fill_sha256": "4ad1e98075dd6167fb32e8892bb3174d2789eb96c803da5f5d87a7386550f211",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 17,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_172102_707580.jpg",
+          "tank_level_sha256": "3f74304edcece2c2f673cf2a5938fda34dfd9547e5a536c1315734e1248957f6",
+          "timestamp": "2026-09-22 17:21:02.707580",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_172102_707580.jpg",
+          "vial_fill_sha256": "4fa4ea566c9b75d9f579ece42e57027ce9018f7f503d48207fdcfd30330aaa81",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 18,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_172209_016714.jpg",
+          "tank_level_sha256": "50ef365d110f0791d24ebd399c8db3c3a35bffd10030834025291938d8df70f1",
+          "timestamp": "2026-09-22 17:22:09.016714",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_172209_016714.jpg",
+          "vial_fill_sha256": "6ee27a14504f67187b40bbbc336b2b3a6f6b7bbdf1b7a89363140fc6fbd43e23",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 19,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_172309_316875.jpg",
+          "tank_level_sha256": "24a1eff68492f1b7c9eafd012bf8381a4fab89ee50b6551d5c14410b0f2f139c",
+          "timestamp": "2026-09-22 17:23:09.316875",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_172309_316875.jpg",
+          "vial_fill_sha256": "6cfc416ea59da1db9740b6cf6ae68bdf9197b53d49e64064bcd1e8c31a1ca1bf",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 1,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_192649_347914.jpg",
+          "tank_level_sha256": "846cd19b27032a966a6591aabaf1a453be5ae7360f737b97d8036ec2d975760c",
+          "timestamp": "2026-09-22 19:26:49.347914",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_192649_347914.jpg",
+          "vial_fill_sha256": "a85b24daf174d03e316a103b87f46eaf6f4d0252ac6fcde9d519f85efc41f438",
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.8,
+          "nominal_cycle": 2,
+          "settled_proxy_pass": false,
+          "tank_level_path": "tank_level/images/tank_level_20260922_192741_666577.jpg",
+          "tank_level_sha256": "fb33dc729fef4f92875b71f953d348c3c90d196c4225be380247c6caff49d01b",
+          "timestamp": "2026-09-22 19:27:41.666577",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_192741_666577.jpg",
+          "vial_fill_sha256": "3c4a5c6d033a89a140c480b467b861482256e42b224bfa3aceea3dcaf38a6852",
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 3,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260922_192841_976027.jpg",
+          "tank_level_sha256": "4608efeef51bc00137f0fe0be25607ef63107551bea0b1dffc83773a1030f8ad",
+          "timestamp": "2026-09-22 19:28:41.976027",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260922_192841_976027.jpg",
+          "vial_fill_sha256": "4efd1b65ada96a15fd96878ab13110e0660a3bf1dd75d5800571923ee6365a0d",
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 1,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_184658_709519.jpg",
+          "tank_level_sha256": "17f83a277a86ea4522c6c25856dc9cdd5f2d78e1323a64667f6daab1349942d1",
+          "timestamp": "2026-09-23 18:46:58.709519",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_184658_709519.jpg",
+          "vial_fill_sha256": "40e36abcfe4f182d9ee80a87c1e54e3c6a2841e8dc3f3327cbc17fa2054e8e25",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 2,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_184730_854437.jpg",
+          "tank_level_sha256": "0a8a965dba16c9ea3196e737c069ae8feb1323e215a8d19927429d58fd9de4c2",
+          "timestamp": "2026-09-23 18:47:30.854437",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_184730_854437.jpg",
+          "vial_fill_sha256": "9c94701e37e12949342fdd68a55a197faff34335216983df1991f4626c283dd2",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 3,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_184803_047414.jpg",
+          "tank_level_sha256": "d8498181280392b83ef018b030a8bf8ac9b5f016a198483ffbf47553c96fa2ee",
+          "timestamp": "2026-09-23 18:48:03.047414",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_184803_047414.jpg",
+          "vial_fill_sha256": "f121a2869a043b55afade933a0fec9cbd64225585d2b3d6f5b8fca5f46b041c3",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 4,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_184835_215278.jpg",
+          "tank_level_sha256": "d9f34530ab8eb20178368ef321f10fbeea799784525646939b231b01f85e5ee0",
+          "timestamp": "2026-09-23 18:48:35.215278",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_184835_215278.jpg",
+          "vial_fill_sha256": "b3e5925accaed172f297f06bb6ef9a2eb2afcc1af1d56dc82c3dad80b8f855bb",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 5,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_184907_384046.jpg",
+          "tank_level_sha256": "0894f7452bbae92271a8800b78a180f9a8bae83c71c7e79d12f738e582aed701",
+          "timestamp": "2026-09-23 18:49:07.384046",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_184907_384046.jpg",
+          "vial_fill_sha256": "4f61675ba12fe15666594461fd3618ed52eaf36e2d8c38b9a8752bf591297388",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 6,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_184939_562819.jpg",
+          "tank_level_sha256": "f8085596ba5ef67f63347e5f89fd7d74e2cd09010a76704b51f60bfc7f1f8f3a",
+          "timestamp": "2026-09-23 18:49:39.562819",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_184939_562819.jpg",
+          "vial_fill_sha256": "f8e259ac223153446521a6f4d4e4bcb0bdbaf7f731b42b8d4cdad976860106ba",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 1,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_191105_851913.jpg",
+          "tank_level_sha256": "7a53308646857f61a75010d30377c90e2af95fcea88d2745c503a682d1324b3d",
+          "timestamp": "2026-09-23 19:11:05.851913",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_191105_851913.jpg",
+          "vial_fill_sha256": "26540880c5d065d58f5805bebef2e6dc0994e1c6868110eda348363962fecbce",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 2,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_191158_158845.jpg",
+          "tank_level_sha256": "72ac60d284c6e66e4363f7023b9e875e6201366c3d91778a191f5ead6786b8e3",
+          "timestamp": "2026-09-23 19:11:58.158845",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_191158_158845.jpg",
+          "vial_fill_sha256": "1276b074c981642478cd50fa6e62173208f5881e5fee4fc1fa905bfbe1daebaa",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 3,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_191250_477702.jpg",
+          "tank_level_sha256": "b0f3fe8f69be7ce27aa8cebdb9dad301e943d5d3003aaa4a63eecd39f9f2e261",
+          "timestamp": "2026-09-23 19:12:50.477702",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_191250_477702.jpg",
+          "vial_fill_sha256": "be032cef30d99938fe5fb4c42b3001ade48e3a42cd63eb6ff8adbabc0cb92b31",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 4,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_191342_755431.jpg",
+          "tank_level_sha256": "591442b7f2b902b49fde1e23a0a3ec17ddd5de77ce9c014e13c3906b3c647910",
+          "timestamp": "2026-09-23 19:13:42.755431",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_191342_755431.jpg",
+          "vial_fill_sha256": "958e61e7d0ccdcaaa06872a0f57dff63c71d164b524146c652502589e568c0c3",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 5,
+          "settled_proxy_pass": false,
+          "tank_level_path": "tank_level/images/tank_level_20260923_191434_999506.jpg",
+          "tank_level_sha256": "2133b86253acce2fea3017e9eb30cf31129216a2555ed425a34ea95375abf729",
+          "timestamp": "2026-09-23 19:14:34.999506",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_191434_999506.jpg",
+          "vial_fill_sha256": "56562b6f6ab3ef66e4782a0ebe5b4c23b492a71945cd17ec106508695f8b0aad",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "nominal_cycle": 6,
+          "settled_proxy_pass": true,
+          "tank_level_path": "tank_level/images/tank_level_20260923_191529_304720.jpg",
+          "tank_level_sha256": "bfb5c5ba1d176ee44deb58f09e888f886d7841b24de5a77bbb7417bff23b778e",
+          "timestamp": "2026-09-23 19:15:29.304720",
+          "vial_fill_path": "vial_fill/images/vial_fill_20260923_191529_304720.jpg",
+          "vial_fill_sha256": "8ecc30b5c82a2da39949288f72147307e331d1a2ff45dcc955f8a554a2c5820d",
+          "video_id": 4
+        }
+      ],
+      "selection_rule": "split each video's pinned camera index into videos.csv n_vials equal nominal cycles; gate paired 80% and 95% positions, then apply the logged settled proxy",
+      "tank_candidate_allowlist_sha256": "4295b9357aece1c39cc09db245b57c9688973f957874352f886cc4873c2a5892",
+      "tank_selected_frames_decoded": 34,
+      "vial_candidate_allowlist_sha256": "e4f1a1f50fda8fd7decd21dcf660218215485e20f5f18797a7f052bd30842dc0",
+      "vial_candidate_frames_decoded": 68,
+      "video5_paths_resolved_hashed_or_decoded": 0,
+      "video5_vial_colors_csv_opened": 0
+    },
+    "tank_level_dye_colors": {
+      "chromatic_hue_anchor_range_0_to_1": {
+        "max": 0.998906,
+        "mean": 0.456858,
+        "median": 0.55231,
+        "min": 3.8e-05,
+        "p05": 0.001805,
+        "p95": 0.997807
+      },
+      "evidence": "four fixed left-body ROIs avoid the central white level labels and metal; camera pixels are dye-colour anchors, not concentration measurements",
+      "renderer_dark_mix_proposal": {
+        "evidence_label": "proposal combining measured dye hues with observed dark-liquid values; not a physical dye-mixing calibration",
+        "hue_source": "measured tank hue anchors plus measured settled vial hues",
+        "value_range": [
+          0.03,
+          0.35
+        ]
+      },
+      "tanks": {
+        "tank_1_pale_green": {
+          "frame_count": 34,
+          "hue_circular_0_to_1": {
+            "max": 0.446303,
+            "mean": 0.425992,
+            "median": 0.427387,
+            "min": 0.403249,
+            "p05": 0.405702,
+            "p95": 0.443298
+          },
+          "hue_degrees": {
+            "max": 160.668972,
+            "mean": 153.35712,
+            "median": 153.859401,
+            "min": 145.16946,
+            "p05": 146.052869,
+            "p95": 159.58743
+          },
+          "roi_xyxy_half_open": [
+            188,
+            330,
+            205,
+            385
+          ],
+          "saturation": {
+            "max": 0.130456,
+            "mean": 0.087058,
+            "median": 0.081946,
+            "min": 0.05975,
+            "p05": 0.06128,
+            "p95": 0.124342
+          },
+          "value": {
+            "max": 0.791444,
+            "mean": 0.734348,
+            "median": 0.720612,
+            "min": 0.686296,
+            "p05": 0.691689,
+            "p95": 0.787285
+          }
+        },
+        "tank_2_pink_red": {
+          "frame_count": 34,
+          "hue_circular_0_to_1": {
+            "max": 0.998906,
+            "mean": 0.383561,
+            "median": 0.013636,
+            "min": 3.8e-05,
+            "p05": 0.000996,
+            "p95": 0.998743
+          },
+          "hue_degrees": {
+            "max": 359.606158,
+            "mean": 138.082001,
+            "median": 4.908859,
+            "min": 0.013808,
+            "p05": 0.358738,
+            "p95": 359.547574
+          },
+          "roi_xyxy_half_open": [
+            296,
+            330,
+            315,
+            385
+          ],
+          "saturation": {
+            "max": 0.140456,
+            "mean": 0.124815,
+            "median": 0.121484,
+            "min": 0.108434,
+            "p05": 0.111919,
+            "p95": 0.139514
+          },
+          "value": {
+            "max": 0.724218,
+            "mean": 0.647982,
+            "median": 0.648605,
+            "min": 0.563554,
+            "p05": 0.57318,
+            "p95": 0.720087
+          }
+        },
+        "tank_3_pale_neutral": {
+          "frame_count": 34,
+          "hue_circular_0_to_1": {
+            "max": 0.214844,
+            "mean": 0.195672,
+            "median": 0.189592,
+            "min": 0.17914,
+            "p05": 0.184738,
+            "p95": 0.21228
+          },
+          "hue_degrees": {
+            "max": 77.343782,
+            "mean": 70.441918,
+            "median": 68.253226,
+            "min": 64.490261,
+            "p05": 66.505599,
+            "p95": 76.420692
+          },
+          "roi_xyxy_half_open": [
+            405,
+            330,
+            423,
+            385
+          ],
+          "saturation": {
+            "max": 0.101454,
+            "mean": 0.086706,
+            "median": 0.089014,
+            "min": 0.073527,
+            "p05": 0.074847,
+            "p95": 0.100923
+          },
+          "value": {
+            "max": 0.653468,
+            "mean": 0.576794,
+            "median": 0.56309,
+            "min": 0.507237,
+            "p05": 0.517372,
+            "p95": 0.647292
+          }
+        },
+        "tank_4_blue": {
+          "frame_count": 34,
+          "hue_circular_0_to_1": {
+            "max": 0.688736,
+            "mean": 0.568769,
+            "median": 0.56309,
+            "min": 0.54928,
+            "p05": 0.550665,
+            "p95": 0.588038
+          },
+          "hue_degrees": {
+            "max": 247.944926,
+            "mean": 204.756976,
+            "median": 202.712568,
+            "min": 197.740764,
+            "p05": 198.239226,
+            "p95": 211.693846
+          },
+          "roi_xyxy_half_open": [
+            514,
+            330,
+            532,
+            385
+          ],
+          "saturation": {
+            "max": 0.681184,
+            "mean": 0.240702,
+            "median": 0.195811,
+            "min": 0.165997,
+            "p05": 0.167244,
+            "p95": 0.314841
+          },
+          "value": {
+            "max": 0.655346,
+            "mean": 0.572548,
+            "median": 0.578576,
+            "min": 0.226136,
+            "p05": 0.520116,
+            "p95": 0.650373
+          }
+        }
+      }
+    },
+    "vial_fill": {
+      "global_look": {
+        "backdrop_local_robust_contrast": {
+          "max": 0.156863,
+          "mean": 0.140297,
+          "median": 0.137255,
+          "min": 0.117647,
+          "p05": 0.123529,
+          "p95": 0.156863
+        },
+        "backdrop_median_luma": {
+          "max": 0.67451,
+          "mean": 0.610879,
+          "median": 0.592157,
+          "min": 0.580392,
+          "p05": 0.580392,
+          "p95": 0.670588
+        },
+        "blur_proxy_laplacian_variance_8bit": {
+          "max": 403.679382,
+          "mean": 320.909473,
+          "median": 314.27182,
+          "min": 260.146545,
+          "p05": 264.554398,
+          "p95": 396.124222
+        },
+        "frame_count": 31,
+        "grayscale_standard_deviation": {
+          "max": 0.225314,
+          "mean": 0.205766,
+          "median": 0.201768,
+          "min": 0.193531,
+          "p05": 0.19455,
+          "p95": 0.221512
+        },
+        "haze_proxy": {
+          "physical_haze_identifiable": false,
+          "wording": "Physical haze is not identifiable from one camera view. Backdrop luma and local contrast are appearance proxies only."
+        },
+        "noise_proxy_normalized_sigma": {
+          "max": 0.002305,
+          "mean": 0.002134,
+          "median": 0.002101,
+          "min": 0.001949,
+          "p05": 0.00197,
+          "p95": 0.002301
+        },
+        "robust_contrast_p95_minus_p05": {
+          "max": 0.682353,
+          "mean": 0.617963,
+          "median": 0.603922,
+          "min": 0.576471,
+          "p05": 0.580392,
+          "p95": 0.666667
+        }
+      },
+      "labels": {
+        "dark_print_fraction_proxy": {
+          "max": 0.460571,
+          "mean": 0.369637,
+          "median": 0.354476,
+          "min": 0.296476,
+          "p05": 0.310667,
+          "p95": 0.447571
+        },
+        "edge_fraction_proxy": {
+          "max": 0.132381,
+          "mean": 0.073054,
+          "median": 0.061714,
+          "min": 0.025238,
+          "p05": 0.033,
+          "p95": 0.130048
+        },
+        "evidence": "fixed vial-region pixel proxies on settled-proxy stills; not OCR or a label detector",
+        "frame_count": 31,
+        "geometry_reference": "Use the manually measured BRADY polygon from video-5 vial 1 for size, height and roll; these videos add look variation only.",
+        "paper_fraction_proxy": {
+          "max": 0.645048,
+          "mean": 0.547978,
+          "median": 0.550952,
+          "min": 0.47181,
+          "p05": 0.480619,
+          "p95": 0.617286
+        },
+        "search_roi_xyxy_half_open": [
+          270,
+          130,
+          345,
+          270
+        ]
+      },
+      "liquid": {
+        "classification": "mean saturation >= 0.25 or mean value <= 0.20",
+        "colored_or_dark_settled_count": 10,
+        "deep_roi_xyxy_half_open": [
+          298,
+          300,
+          316,
+          410
+        ],
+        "per_frame_hue_circular_0_to_1": {
+          "max": 0.579998,
+          "mean": 0.359078,
+          "median": 0.513265,
+          "min": 0.026299,
+          "p05": 0.026732,
+          "p95": 0.57892
+        },
+        "per_frame_saturation": {
+          "max": 0.929002,
+          "mean": 0.720206,
+          "median": 0.776835,
+          "min": 0.310665,
+          "p05": 0.393654,
+          "p95": 0.914939
+        },
+        "per_frame_value": {
+          "max": 0.279228,
+          "mean": 0.207942,
+          "median": 0.223861,
+          "min": 0.072101,
+          "p05": 0.116777,
+          "p95": 0.269671
+        }
+      },
+      "selected_nominal_cycle_count": 34,
+      "selection_records": [
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.00197,
+          "deep_liquid_hue_circular_0_to_1": 0.180934,
+          "deep_liquid_saturation": 0.155068,
+          "deep_liquid_value": 0.331987,
+          "filename": "vial_fill_20260922_170526_617910.jpg",
+          "nominal_cycle": 1,
+          "settled_proxy_pass": true,
+          "sha256": "e150dd7f7c560a26e97f0fc508ffcf232eeeac5df014186a653e02ce8d5686e7",
+          "timestamp": "2026-09-22 17:05:26.617910",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.195061,
+          "deep_liquid_saturation": 0.113147,
+          "deep_liquid_value": 0.351,
+          "filename": "vial_fill_20260922_170624_853824.jpg",
+          "nominal_cycle": 2,
+          "settled_proxy_pass": true,
+          "sha256": "86b4b8afa173752cf245a4f282fca8f8df6c96a3700582f34c0fe9a8768235f0",
+          "timestamp": "2026-09-22 17:06:24.853824",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.00197,
+          "deep_liquid_hue_circular_0_to_1": 0.579998,
+          "deep_liquid_saturation": 0.929002,
+          "deep_liquid_value": 0.239537,
+          "filename": "vial_fill_20260922_170717_068128.jpg",
+          "nominal_cycle": 3,
+          "settled_proxy_pass": true,
+          "sha256": "5be46ba065d2282cbcf03a235f40bb1d4dd3a0402b96418d84290737a369781e",
+          "timestamp": "2026-09-22 17:07:17.068128",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.009852,
+          "deep_liquid_hue_circular_0_to_1": 0.577602,
+          "deep_liquid_saturation": 0.89775,
+          "deep_liquid_value": 0.221375,
+          "filename": "vial_fill_20260922_170823_330404.jpg",
+          "nominal_cycle": 4,
+          "settled_proxy_pass": true,
+          "sha256": "ca0eb02f67560d6b83839dd947c93178ca8137260d44f3dd35da350f53121d5c",
+          "timestamp": "2026-09-22 17:08:23.330404",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.043842,
+          "deep_liquid_hue_circular_0_to_1": 0.575928,
+          "deep_liquid_saturation": 0.925427,
+          "deep_liquid_value": 0.228053,
+          "filename": "vial_fill_20260922_170921_574196.jpg",
+          "nominal_cycle": 5,
+          "settled_proxy_pass": false,
+          "sha256": "7f1a0aef800aa31b603c1bdf8c86c923143c14fbc50c78157a3e6ecdca2ab014",
+          "timestamp": "2026-09-22 17:09:21.574196",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.010345,
+          "deep_liquid_hue_circular_0_to_1": 0.554425,
+          "deep_liquid_saturation": 0.599832,
+          "deep_liquid_value": 0.226348,
+          "filename": "vial_fill_20260922_171013_841637.jpg",
+          "nominal_cycle": 6,
+          "settled_proxy_pass": true,
+          "sha256": "416e49dadba604c1e16c7b1b634388be25fca1a47268971550784a2e01ee21b5",
+          "timestamp": "2026-09-22 17:10:13.841637",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.004433,
+          "deep_liquid_hue_circular_0_to_1": 0.187724,
+          "deep_liquid_saturation": 0.135306,
+          "deep_liquid_value": 0.316754,
+          "filename": "vial_fill_20260922_171112_088200.jpg",
+          "nominal_cycle": 7,
+          "settled_proxy_pass": true,
+          "sha256": "243bb7137823282fc6f70a816f10be001abd4ca064d99cdfa25b05f794bd3b24",
+          "timestamp": "2026-09-22 17:11:12.088200",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.166929,
+          "deep_liquid_saturation": 0.151034,
+          "deep_liquid_value": 0.298174,
+          "filename": "vial_fill_20260922_171218_327706.jpg",
+          "nominal_cycle": 8,
+          "settled_proxy_pass": true,
+          "sha256": "0a1df4b18514b33e400cb8cdeae895f84e54982bb7d02f48825132b12b07d2e9",
+          "timestamp": "2026-09-22 17:12:18.327706",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.172879,
+          "deep_liquid_saturation": 0.175926,
+          "deep_liquid_value": 0.298356,
+          "filename": "vial_fill_20260922_171318_569914.jpg",
+          "nominal_cycle": 9,
+          "settled_proxy_pass": true,
+          "sha256": "6e883734751271623dfe6b7fa286ea30b4562ba013f4a0febcb89e9359808a70",
+          "timestamp": "2026-09-22 17:13:18.569914",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.027261,
+          "deep_liquid_saturation": 0.884668,
+          "deep_liquid_value": 0.279228,
+          "filename": "vial_fill_20260922_171408_718398.jpg",
+          "nominal_cycle": 10,
+          "settled_proxy_pass": true,
+          "sha256": "7e6f9d68ef0e37d5c0cd0970747250f100da31ed6989cf622e554fc78c4b375a",
+          "timestamp": "2026-09-22 17:14:08.718398",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.026299,
+          "deep_liquid_saturation": 0.816954,
+          "deep_liquid_value": 0.25799,
+          "filename": "vial_fill_20260922_171517_019919.jpg",
+          "nominal_cycle": 11,
+          "settled_proxy_pass": true,
+          "sha256": "310a4196ded200cf79d0492d8241447df23be1a4ee384955624d73850a97f339",
+          "timestamp": "2026-09-22 17:15:17.019919",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.229602,
+          "deep_liquid_saturation": 0.145668,
+          "deep_liquid_value": 0.311893,
+          "filename": "vial_fill_20260922_171607_272830.jpg",
+          "nominal_cycle": 12,
+          "settled_proxy_pass": true,
+          "sha256": "84f66424c35036f45ec712bfe8d28e29b77a8e173ab7354aa86ff08804e32d1c",
+          "timestamp": "2026-09-22 17:16:07.272830",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.002956,
+          "deep_liquid_hue_circular_0_to_1": 0.150078,
+          "deep_liquid_saturation": 0.201802,
+          "deep_liquid_value": 0.302319,
+          "filename": "vial_fill_20260922_171705_528248.jpg",
+          "nominal_cycle": 13,
+          "settled_proxy_pass": true,
+          "sha256": "28b811e9b6c8d7c62b4fdc00abc3007cde0257259833c61bf2a3821b58ca59c2",
+          "timestamp": "2026-09-22 17:17:05.528248",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.014778,
+          "deep_liquid_hue_circular_0_to_1": 0.183842,
+          "deep_liquid_saturation": 0.151315,
+          "deep_liquid_value": 0.329299,
+          "filename": "vial_fill_20260922_171813_886696.jpg",
+          "nominal_cycle": 14,
+          "settled_proxy_pass": true,
+          "sha256": "3d22b98e264862ed63bbab322312c89b982dc88350ffb5db2074496ae0cdf412",
+          "timestamp": "2026-09-22 17:18:13.886696",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.002463,
+          "deep_liquid_hue_circular_0_to_1": 0.174203,
+          "deep_liquid_saturation": 0.096427,
+          "deep_liquid_value": 0.307304,
+          "filename": "vial_fill_20260922_171912_172990.jpg",
+          "nominal_cycle": 15,
+          "settled_proxy_pass": true,
+          "sha256": "381a04510cd00d5de9f14ae0b167095b03a8acef7d0555278235d93b6b107b80",
+          "timestamp": "2026-09-22 17:19:12.172990",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.016256,
+          "deep_liquid_hue_circular_0_to_1": 0.159062,
+          "deep_liquid_saturation": 0.211943,
+          "deep_liquid_value": 0.308196,
+          "filename": "vial_fill_20260922_172010_462368.jpg",
+          "nominal_cycle": 16,
+          "settled_proxy_pass": true,
+          "sha256": "4ad1e98075dd6167fb32e8892bb3174d2789eb96c803da5f5d87a7386550f211",
+          "timestamp": "2026-09-22 17:20:10.462368",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.006897,
+          "deep_liquid_hue_circular_0_to_1": 0.506977,
+          "deep_liquid_saturation": 0.495086,
+          "deep_liquid_value": 0.072101,
+          "filename": "vial_fill_20260922_172102_707580.jpg",
+          "nominal_cycle": 17,
+          "settled_proxy_pass": true,
+          "sha256": "4fa4ea566c9b75d9f579ece42e57027ce9018f7f503d48207fdcfd30330aaa81",
+          "timestamp": "2026-09-22 17:21:02.707580",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.003448,
+          "deep_liquid_hue_circular_0_to_1": 0.040997,
+          "deep_liquid_saturation": 0.736716,
+          "deep_liquid_value": 0.171382,
+          "filename": "vial_fill_20260922_172209_016714.jpg",
+          "nominal_cycle": 18,
+          "settled_proxy_pass": true,
+          "sha256": "6ee27a14504f67187b40bbbc336b2b3a6f6b7bbdf1b7a89363140fc6fbd43e23",
+          "timestamp": "2026-09-22 17:22:09.016714",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.163247,
+          "deep_liquid_saturation": 0.246671,
+          "deep_liquid_value": 0.303882,
+          "filename": "vial_fill_20260922_172309_316875.jpg",
+          "nominal_cycle": 19,
+          "settled_proxy_pass": true,
+          "sha256": "6cfc416ea59da1db9740b6cf6ae68bdf9197b53d49e64064bcd1e8c31a1ca1bf",
+          "timestamp": "2026-09-22 17:23:09.316875",
+          "video_id": 1
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.012315,
+          "deep_liquid_hue_circular_0_to_1": 0.569826,
+          "deep_liquid_saturation": 0.823561,
+          "deep_liquid_value": 0.172783,
+          "filename": "vial_fill_20260922_192649_347914.jpg",
+          "nominal_cycle": 1,
+          "settled_proxy_pass": true,
+          "sha256": "a85b24daf174d03e316a103b87f46eaf6f4d0252ac6fcde9d519f85efc41f438",
+          "timestamp": "2026-09-22 19:26:49.347914",
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.8,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.039901,
+          "deep_liquid_hue_circular_0_to_1": 0.581784,
+          "deep_liquid_saturation": 0.496065,
+          "deep_liquid_value": 0.251931,
+          "filename": "vial_fill_20260922_192741_666577.jpg",
+          "nominal_cycle": 2,
+          "settled_proxy_pass": false,
+          "sha256": "3c4a5c6d033a89a140c480b467b861482256e42b224bfa3aceea3dcaf38a6852",
+          "timestamp": "2026-09-22 19:27:41.666577",
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.000985,
+          "deep_liquid_hue_circular_0_to_1": 0.159813,
+          "deep_liquid_saturation": 0.144641,
+          "deep_liquid_value": 0.349848,
+          "filename": "vial_fill_20260922_192841_976027.jpg",
+          "nominal_cycle": 3,
+          "settled_proxy_pass": true,
+          "sha256": "4efd1b65ada96a15fd96878ab13110e0660a3bf1dd75d5800571923ee6365a0d",
+          "timestamp": "2026-09-22 19:28:41.976027",
+          "video_id": 2
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.15757,
+          "deep_liquid_saturation": 0.150967,
+          "deep_liquid_value": 0.278045,
+          "filename": "vial_fill_20260923_184658_709519.jpg",
+          "nominal_cycle": 1,
+          "settled_proxy_pass": true,
+          "sha256": "40e36abcfe4f182d9ee80a87c1e54e3c6a2841e8dc3f3327cbc17fa2054e8e25",
+          "timestamp": "2026-09-23 18:46:58.709519",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.187845,
+          "deep_liquid_saturation": 0.310665,
+          "deep_liquid_value": 0.239851,
+          "filename": "vial_fill_20260923_184730_854437.jpg",
+          "nominal_cycle": 2,
+          "settled_proxy_pass": true,
+          "sha256": "9c94701e37e12949342fdd68a55a197faff34335216983df1991f4626c283dd2",
+          "timestamp": "2026-09-23 18:47:30.854437",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.195238,
+          "deep_liquid_saturation": 0.129321,
+          "deep_liquid_value": 0.354256,
+          "filename": "vial_fill_20260923_184803_047414.jpg",
+          "nominal_cycle": 3,
+          "settled_proxy_pass": true,
+          "sha256": "f121a2869a043b55afade933a0fec9cbd64225585d2b3d6f5b8fca5f46b041c3",
+          "timestamp": "2026-09-23 18:48:03.047414",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.212474,
+          "deep_liquid_saturation": 0.101547,
+          "deep_liquid_value": 0.345235,
+          "filename": "vial_fill_20260923_184835_215278.jpg",
+          "nominal_cycle": 4,
+          "settled_proxy_pass": true,
+          "sha256": "b3e5925accaed172f297f06bb6ef9a2eb2afcc1af1d56dc82c3dad80b8f855bb",
+          "timestamp": "2026-09-23 18:48:35.215278",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.155058,
+          "deep_liquid_saturation": 0.177001,
+          "deep_liquid_value": 0.335732,
+          "filename": "vial_fill_20260923_184907_384046.jpg",
+          "nominal_cycle": 5,
+          "settled_proxy_pass": true,
+          "sha256": "4f61675ba12fe15666594461fd3618ed52eaf36e2d8c38b9a8752bf591297388",
+          "timestamp": "2026-09-23 18:49:07.384046",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.171666,
+          "deep_liquid_saturation": 0.199002,
+          "deep_liquid_value": 0.370107,
+          "filename": "vial_fill_20260923_184939_562819.jpg",
+          "nominal_cycle": 6,
+          "settled_proxy_pass": true,
+          "sha256": "f8e259ac223153446521a6f4d4e4bcb0bdbaf7f731b42b8d4cdad976860106ba",
+          "timestamp": "2026-09-23 18:49:39.562819",
+          "video_id": 3
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.187334,
+          "deep_liquid_saturation": 0.133013,
+          "deep_liquid_value": 0.366366,
+          "filename": "vial_fill_20260923_191105_851913.jpg",
+          "nominal_cycle": 1,
+          "settled_proxy_pass": true,
+          "sha256": "26540880c5d065d58f5805bebef2e6dc0994e1c6868110eda348363962fecbce",
+          "timestamp": "2026-09-23 19:11:05.851913",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.0,
+          "deep_liquid_hue_circular_0_to_1": 0.179412,
+          "deep_liquid_saturation": 0.133712,
+          "deep_liquid_value": 0.311234,
+          "filename": "vial_fill_20260923_191158_158845.jpg",
+          "nominal_cycle": 2,
+          "settled_proxy_pass": true,
+          "sha256": "1276b074c981642478cd50fa6e62173208f5881e5fee4fc1fa905bfbe1daebaa",
+          "timestamp": "2026-09-23 19:11:58.158845",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.014286,
+          "deep_liquid_hue_circular_0_to_1": 0.156142,
+          "deep_liquid_saturation": 0.178455,
+          "deep_liquid_value": 0.362717,
+          "filename": "vial_fill_20260923_191250_477702.jpg",
+          "nominal_cycle": 3,
+          "settled_proxy_pass": true,
+          "sha256": "be032cef30d99938fe5fb4c42b3001ade48e3a42cd63eb6ff8adbabc0cb92b31",
+          "timestamp": "2026-09-23 19:12:50.477702",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.017734,
+          "deep_liquid_hue_circular_0_to_1": 0.519554,
+          "deep_liquid_saturation": 0.707827,
+          "deep_liquid_value": 0.198826,
+          "filename": "vial_fill_20260923_191342_755431.jpg",
+          "nominal_cycle": 4,
+          "settled_proxy_pass": true,
+          "sha256": "958e61e7d0ccdcaaa06872a0f57dff63c71d164b524146c652502589e568c0c3",
+          "timestamp": "2026-09-23 19:13:42.755431",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": true,
+          "colored_stream_fraction": 0.067488,
+          "deep_liquid_hue_circular_0_to_1": 0.471406,
+          "deep_liquid_saturation": 0.423238,
+          "deep_liquid_value": 0.222662,
+          "filename": "vial_fill_20260923_191434_999506.jpg",
+          "nominal_cycle": 5,
+          "settled_proxy_pass": false,
+          "sha256": "56562b6f6ab3ef66e4782a0ebe5b4c23b492a71945cd17ec106508695f8b0aad",
+          "timestamp": "2026-09-23 19:14:34.999506",
+          "video_id": 4
+        },
+        {
+          "candidate_fraction": 0.95,
+          "colored_or_dark_liquid_proxy": false,
+          "colored_stream_fraction": 0.011823,
+          "deep_liquid_hue_circular_0_to_1": 0.175045,
+          "deep_liquid_saturation": 0.163003,
+          "deep_liquid_value": 0.317469,
+          "filename": "vial_fill_20260923_191529_304720.jpg",
+          "nominal_cycle": 6,
+          "settled_proxy_pass": true,
+          "sha256": "8ecc30b5c82a2da39949288f72147307e331d1a2ff45dcc955f8a554a2c5820d",
+          "timestamp": "2026-09-23 19:15:29.304720",
+          "video_id": 4
+        }
+      ],
+      "settled_proxy": {
+        "limitation": "This rejects visible colored pours but cannot prove that clear liquid is motionless; non-passing selections are logged and excluded from appearance summaries.",
+        "maximum_colored_stream_fraction": 0.03,
+        "method": "among 80% and 95% metadata-only candidates, reject candidates whose nozzle-to-vial corridor has more than 3% colored-stream pixels; prefer the strongest colored/dark liquid appearance, otherwise the later still",
+        "stream_roi_xyxy_half_open": [
+          304,
+          70,
+          318,
+          215
+        ]
+      },
+      "settled_proxy_pass_count": 31,
+      "top_surface_and_foam": {
+        "direct_foam_or_specular_bright_fraction_proxy": {
+          "max": 0.054688,
+          "mean": 0.028125,
+          "median": 0.0375,
+          "min": 0.0,
+          "p05": 0.0,
+          "p95": 0.053438
+        },
+        "direct_gray_reflective_fraction_proxy": {
+          "max": 0.095312,
+          "mean": 0.037187,
+          "median": 0.00625,
+          "min": 0.0,
+          "p05": 0.0,
+          "p95": 0.093125
+        },
+        "direct_surface_saturation": {
+          "max": 0.531765,
+          "mean": 0.465039,
+          "median": 0.515196,
+          "min": 0.367261,
+          "p05": 0.370869,
+          "p95": 0.530547
+        },
+        "direct_surface_value": {
+          "max": 0.280533,
+          "mean": 0.220739,
+          "median": 0.244001,
+          "min": 0.078358,
+          "p05": 0.110283,
+          "p95": 0.27699
+        },
+        "directly_visible_proxy_count": 5,
+        "evidence": "hue-compatible row-run top plus a fixed 16-pixel band; rows overlapping the holder are flagged instead of claimed visible",
+        "proxy_caveat": "There are no semantic foam or bubble labels. Bright fractions and small components mix foam, bubbles, glare and compression artifacts.",
+        "row_proxy_count": 10,
+        "surface_records": [
+          {
+            "band_xyxy_half_open": [
+              290,
+              218,
+              330,
+              234
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                218,
+                240
+              ],
+              [
+                262,
+                423
+              ]
+            ],
+            "filename": "vial_fill_20260922_170717_068128.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.0,
+            "gray_reflective_fraction_proxy": 0.0,
+            "hue_circular_0_to_1": 0.594796,
+            "nominal_cycle": 3,
+            "saturation": 0.531765,
+            "small_bright_component_count_proxy": 0,
+            "top_row_proxy": 218,
+            "value": 0.244001,
+            "video_id": 1,
+            "visibility": "directly_visible_proxy"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              217,
+              330,
+              233
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                217,
+                239
+              ],
+              [
+                259,
+                422
+              ]
+            ],
+            "filename": "vial_fill_20260922_170823_330404.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.0375,
+            "gray_reflective_fraction_proxy": 0.00625,
+            "hue_circular_0_to_1": 0.577976,
+            "nominal_cycle": 4,
+            "saturation": 0.525674,
+            "small_bright_component_count_proxy": 3,
+            "top_row_proxy": 217,
+            "value": 0.237984,
+            "video_id": 1,
+            "visibility": "directly_visible_proxy"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              324,
+              330,
+              340
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                324,
+                422
+              ]
+            ],
+            "filename": "vial_fill_20260922_171013_841637.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.048438,
+            "gray_reflective_fraction_proxy": 0.084375,
+            "hue_circular_0_to_1": 0.530615,
+            "nominal_cycle": 6,
+            "saturation": 0.3853,
+            "small_bright_component_count_proxy": 2,
+            "top_row_proxy": 324,
+            "value": 0.262819,
+            "video_id": 1,
+            "visibility": "directly_visible_proxy"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              268,
+              330,
+              284
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                268,
+                422
+              ]
+            ],
+            "filename": "vial_fill_20260922_171408_718398.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.004687,
+            "gray_reflective_fraction_proxy": 0.0125,
+            "hue_circular_0_to_1": 0.029791,
+            "nominal_cycle": 10,
+            "saturation": 0.534234,
+            "small_bright_component_count_proxy": 1,
+            "top_row_proxy": 268,
+            "value": 0.329712,
+            "video_id": 1,
+            "visibility": "holder_overlap_or_edge"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              268,
+              330,
+              284
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                268,
+                420
+              ]
+            ],
+            "filename": "vial_fill_20260922_171517_019919.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.18125,
+            "gray_reflective_fraction_proxy": 0.04375,
+            "hue_circular_0_to_1": 0.014858,
+            "nominal_cycle": 11,
+            "saturation": 0.67935,
+            "small_bright_component_count_proxy": 6,
+            "top_row_proxy": 268,
+            "value": 0.363125,
+            "video_id": 1,
+            "visibility": "holder_overlap_or_edge"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              302,
+              330,
+              318
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                302,
+                418
+              ]
+            ],
+            "filename": "vial_fill_20260922_172102_707580.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.0,
+            "gray_reflective_fraction_proxy": 0.0,
+            "hue_circular_0_to_1": 0.452977,
+            "nominal_cycle": 17,
+            "saturation": 0.515196,
+            "small_bright_component_count_proxy": 0,
+            "top_row_proxy": 302,
+            "value": 0.078358,
+            "video_id": 1,
+            "visibility": "directly_visible_proxy"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              272,
+              330,
+              288
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                272,
+                421
+              ]
+            ],
+            "filename": "vial_fill_20260922_172209_016714.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.00625,
+            "gray_reflective_fraction_proxy": 0.015625,
+            "hue_circular_0_to_1": 0.063661,
+            "nominal_cycle": 18,
+            "saturation": 0.329589,
+            "small_bright_component_count_proxy": 1,
+            "top_row_proxy": 272,
+            "value": 0.205417,
+            "video_id": 1,
+            "visibility": "holder_overlap_or_edge"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              265,
+              330,
+              281
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                265,
+                422
+              ]
+            ],
+            "filename": "vial_fill_20260922_192649_347914.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.017188,
+            "gray_reflective_fraction_proxy": 0.0,
+            "hue_circular_0_to_1": 0.560567,
+            "nominal_cycle": 1,
+            "saturation": 0.394259,
+            "small_bright_component_count_proxy": 4,
+            "top_row_proxy": 265,
+            "value": 0.19432,
+            "video_id": 2,
+            "visibility": "holder_overlap_or_edge"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              261,
+              330,
+              277
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                261,
+                422
+              ]
+            ],
+            "filename": "vial_fill_20260923_184730_854437.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.028125,
+            "gray_reflective_fraction_proxy": 0.017188,
+            "hue_circular_0_to_1": 0.204873,
+            "nominal_cycle": 2,
+            "saturation": 0.406967,
+            "small_bright_component_count_proxy": 4,
+            "top_row_proxy": 261,
+            "value": 0.273854,
+            "video_id": 3,
+            "visibility": "holder_overlap_or_edge"
+          },
+          {
+            "band_xyxy_half_open": [
+              290,
+              302,
+              330,
+              318
+            ],
+            "compatible_row_runs_half_open": [
+              [
+                302,
+                419
+              ]
+            ],
+            "filename": "vial_fill_20260923_191342_755431.jpg",
+            "foam_or_specular_bright_fraction_proxy": 0.054688,
+            "gray_reflective_fraction_proxy": 0.095312,
+            "hue_circular_0_to_1": 0.477193,
+            "nominal_cycle": 4,
+            "saturation": 0.367261,
+            "small_bright_component_count_proxy": 5,
+            "top_row_proxy": 302,
+            "value": 0.280533,
+            "video_id": 4,
+            "visibility": "directly_visible_proxy"
+          }
+        ],
+        "top_row_proxy": {
+          "max": 324.0,
+          "mean": 269.7,
+          "median": 268.0,
+          "min": 217.0,
+          "p05": 217.45,
+          "p95": 314.1
+        }
+      }
+    }
+  },
+  "global_look": {
+    "backdrop": {
+      "luma_p05": {
+        "max": 0.621871,
+        "mean": 0.614343,
+        "median": 0.612057,
+        "min": 0.609819,
+        "p05": 0.609819,
+        "p95": 0.621584
+      },
+      "luma_p95": {
+        "max": 0.773711,
+        "mean": 0.772846,
+        "median": 0.772574,
+        "min": 0.772574,
+        "p05": 0.772574,
+        "p95": 0.773711
+      },
+      "median_luma": {
+        "max": 0.666692,
+        "mean": 0.660751,
+        "median": 0.659415,
+        "min": 0.659415,
+        "p05": 0.659415,
+        "p95": 0.666692
+      },
+      "median_rgb": {
+        "b": {
+          "max": 0.65098,
+          "mean": 0.647139,
+          "median": 0.647059,
+          "min": 0.647059,
+          "p05": 0.647059,
+          "p95": 0.647059
+        },
+        "g": {
+          "max": 0.67451,
+          "mean": 0.668387,
+          "median": 0.666667,
+          "min": 0.666667,
+          "p05": 0.666667,
+          "p95": 0.67451
+        },
+        "r": {
+          "max": 0.647059,
+          "mean": 0.640296,
+          "median": 0.639216,
+          "min": 0.639216,
+          "p05": 0.639216,
+          "p95": 0.647059
+        }
+      },
+      "median_saturation": {
+        "max": 0.043137,
+        "mean": 0.040816,
+        "median": 0.039216,
+        "min": 0.039216,
+        "p05": 0.039216,
+        "p95": 0.043137
+      },
+      "robust_contrast_p95_minus_p05": {
+        "max": 0.163322,
+        "mean": 0.158503,
+        "median": 0.160517,
+        "min": 0.151269,
+        "p05": 0.151557,
+        "p95": 0.162755
+      },
+      "roi_xyxy_half_open": [
+        20,
+        80,
+        240,
+        250
+      ],
+      "tint_b_minus_g": {
+        "max": -0.019608,
+        "mean": -0.021248,
+        "median": -0.019608,
+        "min": -0.027451,
+        "p05": -0.027451,
+        "p95": -0.019608
+      },
+      "tint_r_minus_g": {
+        "max": -0.027451,
+        "mean": -0.028091,
+        "median": -0.027451,
+        "min": -0.031373,
+        "p05": -0.031373,
+        "p95": -0.027451
+      }
+    },
+    "blur_proxies": {
+      "laplacian_variance_8bit": {
+        "max": 359.824097,
+        "mean": 305.944132,
+        "median": 290.100143,
+        "min": 248.906387,
+        "p05": 287.061375,
+        "p95": 359.196678
+      },
+      "tenengrad_normalized": {
+        "max": 0.087808,
+        "mean": 0.08459,
+        "median": 0.083674,
+        "min": 0.08016,
+        "p05": 0.083549,
+        "p95": 0.087744
+      }
+    },
+    "frame_count": 98,
+    "haze_proxy": {
+      "backdrop_local_robust_contrast": {
+        "max": 0.163322,
+        "mean": 0.158503,
+        "median": 0.160517,
+        "min": 0.151269,
+        "p05": 0.151557,
+        "p95": 0.162755
+      },
+      "backdrop_luma_floor_p05": {
+        "max": 0.621871,
+        "mean": 0.614343,
+        "median": 0.612057,
+        "min": 0.609819,
+        "p05": 0.609819,
+        "p95": 0.621584
+      },
+      "physical_haze_identifiable": false,
+      "wording": "Physical haze is not identifiable from one camera view. The backdrop luma floor and local robust contrast are appearance proxies only."
+    },
+    "noise_proxy": {
+      "method": "1.4826 times MAD of residual after Gaussian sigma 1.5 in backdrop ROI",
+      "normalized_sigma": {
+        "max": 0.001821,
+        "mean": 0.001477,
+        "median": 0.001449,
+        "min": 0.001371,
+        "p05": 0.001384,
+        "p95": 0.001689
+      }
+    },
+    "scene_without_timestamp": {
+      "grayscale_p05": {
+        "max": 0.121569,
+        "mean": 0.104762,
+        "median": 0.098039,
+        "min": 0.098039,
+        "p05": 0.098039,
+        "p95": 0.121569
+      },
+      "grayscale_p50": {
+        "max": 0.52549,
+        "mean": 0.514286,
+        "median": 0.509804,
+        "min": 0.509804,
+        "p05": 0.509804,
+        "p95": 0.52549
+      },
+      "grayscale_p95": {
+        "max": 0.780392,
+        "mean": 0.778191,
+        "median": 0.776471,
+        "min": 0.776471,
+        "p05": 0.776471,
+        "p95": 0.780392
+      },
+      "grayscale_standard_deviation": {
+        "max": 0.226678,
+        "mean": 0.224922,
+        "median": 0.226528,
+        "min": 0.220138,
+        "p05": 0.2209,
+        "p95": 0.226621
+      },
+      "robust_contrast_p95_minus_p05": {
+        "max": 0.682353,
+        "mean": 0.673429,
+        "median": 0.678431,
+        "min": 0.654902,
+        "p05": 0.658235,
+        "p95": 0.682353
+      },
+      "rows_half_open": [
+        0,
+        440
+      ]
+    }
+  },
+  "liquids": {
+    "vial_13_80ml": {
+      "appearance_description": "near-black olive",
+      "frame_count": 70,
+      "hue_circular_0_to_1": 0.212521,
+      "hue_degrees": 76.508,
+      "per_frame_hue_circular_0_to_1": {
+        "max": 0.217012,
+        "mean": 0.212535,
+        "median": 0.212356,
+        "min": 0.210141,
+        "p05": 0.21092,
+        "p95": 0.214922
+      },
+      "per_frame_saturation": {
+        "max": 0.427239,
+        "mean": 0.399562,
+        "median": 0.398308,
+        "min": 0.372129,
+        "p05": 0.379762,
+        "p95": 0.420567
+      },
+      "per_frame_value": {
+        "max": 0.088723,
+        "mean": 0.08799,
+        "median": 0.087973,
+        "min": 0.087136,
+        "p05": 0.087509,
+        "p95": 0.088418
+      },
+      "pixel_saturation": {
+        "max": 0.945098,
+        "mean": 0.399562,
+        "median": 0.333333,
+        "min": 0.0,
+        "p05": 0.188235,
+        "p95": 0.713726
+      },
+      "pixel_value": {
+        "max": 0.32549,
+        "mean": 0.08799,
+        "median": 0.066667,
+        "min": 0.043137,
+        "p05": 0.05098,
+        "p95": 0.156863
+      },
+      "roi_xyxy_half_open": [
+        300,
+        276,
+        314,
+        408
+      ]
+    },
+    "vial_1_30ml": {
+      "appearance_description": "dark green",
+      "frame_count": 28,
+      "hue_circular_0_to_1": 0.40565,
+      "hue_degrees": 146.034,
+      "per_frame_hue_circular_0_to_1": {
+        "max": 0.411508,
+        "mean": 0.40564,
+        "median": 0.404678,
+        "min": 0.404336,
+        "p05": 0.404348,
+        "p95": 0.406848
+      },
+      "per_frame_saturation": {
+        "max": 0.814598,
+        "mean": 0.782787,
+        "median": 0.781972,
+        "min": 0.773143,
+        "p05": 0.77564,
+        "p95": 0.796259
+      },
+      "per_frame_value": {
+        "max": 0.155845,
+        "mean": 0.155038,
+        "median": 0.15519,
+        "min": 0.151716,
+        "p05": 0.153863,
+        "p95": 0.15581
+      },
+      "pixel_saturation": {
+        "max": 1.0,
+        "mean": 0.782787,
+        "median": 0.815686,
+        "min": 0.211765,
+        "p05": 0.45098,
+        "p95": 1.0
+      },
+      "pixel_value": {
+        "max": 0.521569,
+        "mean": 0.155038,
+        "median": 0.121569,
+        "min": 0.062745,
+        "p05": 0.094118,
+        "p95": 0.27451
+      },
+      "roi_xyxy_half_open": [
+        298,
+        354,
+        314,
+        420
+      ]
+    }
+  },
+  "other_real_frames_opened": 0,
+  "other_real_frames_opened_definition": "legacy video-5-only counter: no video-5 calibration or real-check frame outside the approved closed 98-frame vial-1/vial-13 set was opened; videos-1--4 appearance-reference counts are recorded separately",
+  "provenance": {
+    "allowed_vials": [
+      1,
+      13
+    ],
+    "calibration_root_name": "calibration-frames-v1-20261101T091716Z",
+    "frame_count": 98,
+    "image_contract": {
+      "encoding": "PNG",
+      "height": 480,
+      "lossless": true,
+      "width": 640
+    },
+    "index_filename": "index.json",
+    "index_sha256": "73181d39ecc8ddc3ce8bb43b2db87a89f4f07d279efe5af70eb41026eb24f9b2",
+    "role": "calibration",
+    "source_video_sha256": "6f87cec1aeec3b2bae6dac639a317c077a3f175f27abd5fc8430d6953d9d05b9",
+    "source_window_role": "real_validation",
+    "validation_order": "index contract, paths and all 98 SHA-256 values pass before first decode",
+    "vial_counts": {
+      "1": 28,
+      "13": 70
+    },
+    "windows_csv_sha256": "19174a4b706fe896b177ba71c8ba2bdf850ceb9cf3a40522dcdaa42d53904229"
+  },
+  "purpose": "renderer-design evidence from permitted video-5 calibration frames and unlabeled appearance references in external videos 1-4",
+  "renderer_guidance": {
+    "dark_liquid_top_surface": {
+      "basis": "calibration surface V medians near 0.172 and 0.217, vial-13 saturation near 0.105 and gray-reflective fraction near 0.893; external direct-surface V mean near 0.221 and p95 near 0.277",
+      "look": "gray reflective oval with subdued liquid tint; include small liquid-tinted or gray foam patches and small surface bubbles",
+      "oval_height_px": [
+        17,
+        24
+      ],
+      "saturation_range": [
+        0.08,
+        0.25
+      ],
+      "value_range": [
+        0.16,
+        0.28
+      ]
+    },
+    "evidence_label": "proposal derived from the measured ranges above; renderer settings, not additional physical measurements",
+    "labels": {
+      "brady_bbox_height_px": 72,
+      "brady_bbox_width_px": 56,
+      "brady_center_xy": [
+        313,
+        204
+      ],
+      "brady_top_edge_roll_degrees": -3.302,
+      "variation": "large white/gray labels with dense dark print at varied heights and rolls"
+    },
+    "liquid": {
+      "dark_frame_fraction_at_or_below_value_0_20": "about one third",
+      "hue_families_circular_0_to_1": {
+        "blue": [
+          0.55,
+          0.59
+        ],
+        "green_teal": [
+          0.33,
+          0.52
+        ],
+        "olive": [
+          0.18,
+          0.22
+        ],
+        "red_brown": [
+          0.0,
+          0.06
+        ]
+      },
+      "near_black": "apply across hue families, not as one hue",
+      "value_range": [
+        0.03,
+        0.35
+      ]
+    }
+  },
+  "schema_version": 2,
+  "training_policy": "appearance measurements only; real frames are never model training data"
+}

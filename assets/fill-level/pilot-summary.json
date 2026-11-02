@@ -1,0 +1,163 @@
+{
+  "schema_version": 1,
+  "step": 5,
+  "evidence_label": "measured synthetic pilot and real-reference geometry",
+  "review_authorization": {
+    "review_sha256": "05fce5740c0695df10dcf5adf8d3c8f3f02985a3ca7561230830bc2c933c47ab",
+    "newest_heading": "2026-10-31 ~17:42: step 4 commit 7e8f98f looked at (not a checkpoint)",
+    "instruction": "GO for step 5 with matte and darker holder variation; stop at the step 5 checkpoint"
+  },
+  "renderer_decision": {
+    "renderer": "PathTracing",
+    "subframes": 32,
+    "resolution": [640, 480],
+    "selected_step6_counts": {
+      "train": 3000,
+      "val": 300,
+      "test": 500
+    },
+    "selected_total_frames": 3800,
+    "reason": "The full plan target fits both the 8.66-hour conservative 20-frame end-to-end estimate and the 7.19-hour startup-adjusted single-batch estimate before the noon Nov 1 cutoff. Pass-only throughput is not used for scheduling.",
+    "deadline_guard": "Re-evaluate counts before Step 6 if its GO arrives with less than about nine hours before the cutoff."
+  },
+  "final_pilot": {
+    "brev_instance": "isaac-launchable-d70fec",
+    "attempt": "step5-20261031-codex-01/attempt-07",
+    "frame_count": 20,
+    "organizer_frame": 686,
+    "stage_up_axis": "Z",
+    "stage_meters_per_unit": 1.0,
+    "passed": true,
+    "source_unchanged": true,
+    "integrity_passed": true,
+    "renderer_script_sha256": "e807f93ad5030e0aa6eea8bf4630a772baa81a48849ea9d823cba8d0c2057958",
+    "variation_module_sha256": "24de6f731d6d6bc81cdac8cc2cdd978529ff34d34c38fee95d6698f34d6388ab",
+    "specs_sha256": "5015aaa253124f5c0602fc5a299dddac5cde7cefb3ae898debc81a85a61afa24",
+    "manifest_sha256": "2c289a1a5ee83071e9ef1388d04729eb8de1eb49ade3f3b3f1c6c802880f1bec",
+    "render_summary_sha256": "c833a8d5375dcf0cd875ad7e9ffa0fcae38a39e3d2299450047343af9a76121a",
+    "session_layer_sha256": "9d22cd2a398ec7686c83c6ff38f51556a9925ceba344faeb095d9e878d44e5db",
+    "offline_report_sha256": "ff0dd361b024925dde34a7c0023d7dbc4751a0c60a617988fc9fcde98eda67ff"
+  },
+  "diagnostic_attempts": "Attempts 01-06 were setup or targeting diagnostics. Only attempts 07 and 08 are final evidence.",
+  "case_coverage": {
+    "empty_frames": 1,
+    "foam_enabled_frames": 9,
+    "sticker_present_frames": 11,
+    "wet_wall_frames": 5,
+    "twin_lower_edge_frames": 3,
+    "twin_hidden_frames": 5,
+    "twin_upper_edge_frames": 4
+  },
+  "holder_variation": {
+    "target_prim": "/FillStation/FillStation_LocalRoot/V3_carrier_0_clamp_21/Mesh_041",
+    "source_black_acetal_diffuse_rgb_linear": [0.014, 0.018, 0.018],
+    "sampled_brightness_min_max": [0.002016719109738128, 0.04990315057831201],
+    "sampled_roughness_min_max": [0.2035592104861388, 0.8397198797604997],
+    "recorded_frames": 20,
+    "note": "World bounds identify clamp_21 as the upper plate around the active vial; cart_* is the lower base. The sampled range includes values clearly darker than the organizer default and high-roughness matte cases."
+  },
+  "label_integrity": {
+    "offline_checker_passed": true,
+    "render_summary_matches_manifest_sha256": true,
+    "errors": [],
+    "frames_with_class": {
+      "empty": 20,
+      "liquid": 19,
+      "foam": 9,
+      "blocked": 20,
+      "ignore": 20
+    },
+    "pixels_by_class": {
+      "empty": 214730,
+      "liquid": 139951,
+      "foam": 13570,
+      "blocked": 63276,
+      "ignore": 5712473
+    }
+  },
+  "visual_inspection": {
+    "ignored_montage_sha256": "0a61c22f5db0372ff6445b61ceb7a074c9251954b27b5b1bbdf780619af5d7c9",
+    "result": "All 20 RGB/mask pairs were inspected. Vial silhouettes, liquid/foam surfaces, sticker and hardware occlusions, empty interiors, holder-zone cases and ignored exteriors were visually coherent; no illegal class colors or obvious mask/RGB displacement was observed."
+  },
+  "camera_checks": {
+    "horizontal_vial_position": {
+      "real_still_basename": "vial_fill_20260923_194741_773473.jpg",
+      "real_still_sha256": "6e886c69d8e01dcc7c260a6dd6b2ab13da9d5b7e9c65b50355227b262c48b3a9",
+      "method": "largest absolute x-gradient of mean grayscale rows 90:160",
+      "real_left_right_center_width_px": [279, 338, 308.5, 59],
+      "synthetic_seed_8155_left_right_center_width_px": [277, 340, 308.5, 63],
+      "synthetic_minus_real_px": {
+        "left": -2,
+        "right": 2,
+        "center": 0.0,
+        "width": 4
+      }
+    },
+    "randomized_pilot_held_out_rows": [
+      {
+        "level_ml": 70.0,
+        "seed": 8114,
+        "geometry_row": 209.79684282947474,
+        "rgb_row": 208.0,
+        "real_reference_row": 206.0
+      },
+      {
+        "level_ml": 75.0,
+        "seed": 8117,
+        "geometry_row": 197.65172653245918,
+        "rgb_row": 197.0,
+        "real_reference_rows": [193.0, 195.0]
+      }
+    ],
+    "clean_near_nominal_held_out_probe": {
+      "attempt": "step5-20261031-codex-01/attempt-08",
+      "passed": true,
+      "source_unchanged": true,
+      "specs_sha256": "cdf0cbb2527159379464f5a9539781305db2f8300e8b8465f4204ad6b2100680",
+      "manifest_sha256": "10694b1e37b15f5e8c865c820f0d943758755d2831eed9b0da28bd58f6c45d74",
+      "render_summary_sha256": "8c745390cebb03ff58375830e261587e43435b8d6ae32f2fffe261e6e4fc55dc",
+      "rows": [
+        {
+          "level_ml": 70.0,
+          "seed": 17351,
+          "geometry_row": 210.87084524150475,
+          "rgb_row": 210.0,
+          "real_reference_row": 206.0,
+          "geometry_delta_px": 4.87084524150475,
+          "rgb_delta_px": 4.0,
+          "geometry_delta_ml_at_3_04_px_per_ml": 1.602251724179194,
+          "rgb_delta_ml_at_3_04_px_per_ml": 1.3157894736842106
+        },
+        {
+          "level_ml": 75.0,
+          "seed": 16646,
+          "geometry_row": 194.06465083915924,
+          "rgb_row": 195.0,
+          "real_reference_rows": [193.0, 195.0],
+          "inside_real_reference_range": true
+        }
+      ],
+      "conditions": "Foam, sticker and wet-wall variation disabled; camera jitter near zero."
+    }
+  },
+  "timing_seconds": {
+    "rgb_median_p95": [1.3791486679997433, 1.6461683899499804],
+    "glass_only_median_p95": [0.7532335175001208, 0.8799806053500107],
+    "glass_hidden_fluid_median_p95": [1.3769991064996248, 1.7362233504500182],
+    "interior_probe_blockers_median_p95": [1.4112963630000195, 1.621154627949727],
+    "all_passes_median_p95": [4.947386666000057, 5.389647836248787],
+    "pilot_process_total": 164.0666811279998,
+    "fixed_start_stage_warmup": 27.97877614599929,
+    "pass_time_frames_per_hour": 727.6568910088013,
+    "startup_adjusted_frames_per_hour": 529.0697950675557,
+    "end_to_end_frames_per_hour": 438.84595888075415,
+    "estimated_hours_for_3800_single_batch": 7.190189089646139,
+    "estimated_hours_for_3800_conservative": 8.6590748373111
+  },
+  "caveats": [
+    "The clean 70 mL probe is about 4-5 pixels lower than the real about-206 row; do not treat the two-point 30/80 mL camera fit as self-validation.",
+    "The 75 mL clean probe is inside the real 193-195 row range.",
+    "RGB edge selection can choose appearance edges under foam, stickers or dark liquids; geometry and RGB rows are reported separately.",
+    "Raw renders, masks, montage, manifests, session layers and real frames remain outside Git under ignored outputs or external inputs."
+  ]
+}

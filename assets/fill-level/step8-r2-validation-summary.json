@@ -1,0 +1,277 @@
+{
+  "schema_version": 1,
+  "purpose": "Step 8 Revision 2 frozen synthetic-validation checkpoint",
+  "status": "gate_failed",
+  "decision": "proceed_to_one_calibration_run_by_user_decision_then_stop",
+  "evidence_label": "measured_on_synthetic_validation_only",
+  "calibration_run_governing_review_sha256": "0a26594b1024bed30f84046fe96fea4922ee013d43bc11ff4ab305e6206163f6",
+  "checkpoint_review_sha256": "ddfba0005d5930a72cd02b69b137330aa6c4735156a92fb5fd41866da33c71d1",
+  "inputs": {
+    "selected_weight_sha256": "1949bdeaaa47dbc709b406a7529437a3c405f2ea9b398a10e47850c9fcfdb094",
+    "training_summary_sha256": "728991a86be636695eedd649ade409c8e837223d492c172c941214f40e9b0930",
+    "frozen_rule_summary_sha256": "850228d2286ba49ea3158a9b03709c2c67ba5d61118823b9ca38a9957191b27b",
+    "full_revised_summary_sha256": "04bb91dbf98c197902f2965a1a6a0dfab9980d15aeb54e316251400625cde61d",
+    "validation_evidence_sha256sums_sha256": "60f63d23d9c8ca4acc958a68e6e12be869532c5995dd2f6e1c794295a352ef55",
+    "local_ignored_evidence_path": "outputs/fill-level-cnn/step8-r2-validation-20261101-codex-01/validation-evidence-v3-20261101T225306Z"
+  },
+  "population": {
+    "role": "val",
+    "frames": 360,
+    "old_step6_validation_frames": 300,
+    "new_exact_v4_validation_frames": 60,
+    "ordered_hash_ledger_sha256": "cffb8c32eab71867ad7b91d78e02b866d73604f06a243deaadf00d10933351bf",
+    "samples_checked": 360,
+    "files_checked": 720
+  },
+  "gate_results": {
+    "passed": false,
+    "visible_surface": {
+      "metric": "normal visible-surface p95 absolute error in rows",
+      "maximum_rows": 3.0,
+      "observed_rows": 17.05,
+      "passed": false
+    },
+    "hidden_surface": {
+      "metric": "ground-truth-hidden frames predicted hidden with truth inside the reported range",
+      "minimum_rate": 0.95,
+      "old_step6_validation_rate": 0.9583333333333334,
+      "old_step6_validation_passed": true,
+      "new_exact_v4_validation_rate": 0.9444444444444444,
+      "new_exact_v4_validation_passed": false,
+      "all_cohorts_passed": false,
+      "user_practical_minimum_rate": 0.9,
+      "new_exact_v4_result_accepted_by_user": true,
+      "frozen_target_unchanged": true
+    }
+  },
+  "cohorts": {
+    "old_step6_validation": {
+      "frames": 300,
+      "seed_range_inclusive": [
+        1100000,
+        1100299
+      ],
+      "normal_visible_surface": {
+        "predictions": 132,
+        "median_absolute_error_rows": 0.0,
+        "p95_absolute_error_rows": 1.45,
+        "max_absolute_error_rows": 34.0,
+        "errors_over_6_rows": 3
+      },
+      "normal_hidden_surface": {
+        "ground_truth_hidden_frames": 72,
+        "successful_frames": 69,
+        "success_rate": 0.9583333333333334,
+        "reported_ranges": 167,
+        "range_width_rows": {
+          "count": 167,
+          "minimum": 92.0,
+          "median": 92.0,
+          "p95": 92.0,
+          "maximum": 92.0
+        },
+        "range_width_ml": {
+          "count": 167,
+          "minimum": 30.263157894736842,
+          "median": 30.263157894736842,
+          "p95": 30.263157894736842,
+          "maximum": 30.263157894736842
+        },
+        "non_hidden_frames_called_hidden": 98
+      },
+      "truth_crop_fallbacks": 0
+    },
+    "new_exact_v4_validation": {
+      "frames": 60,
+      "seed_range_inclusive": [
+        1101000,
+        1101059
+      ],
+      "normal_visible_surface": {
+        "predictions": 26,
+        "median_absolute_error_rows": 2.5,
+        "p95_absolute_error_rows": 60.0,
+        "max_absolute_error_rows": 71.0,
+        "errors_over_6_rows": 8
+      },
+      "normal_hidden_surface": {
+        "ground_truth_hidden_frames": 18,
+        "successful_frames": 17,
+        "success_rate": 0.9444444444444444,
+        "reported_ranges": 34,
+        "range_width_rows": {
+          "count": 34,
+          "minimum": 92.0,
+          "median": 92.0,
+          "p95": 92.0,
+          "maximum": 92.0
+        },
+        "range_width_ml": {
+          "count": 34,
+          "minimum": 30.263157894736842,
+          "median": 30.263157894736842,
+          "p95": 30.263157894736842,
+          "maximum": 30.263157894736842
+        },
+        "non_hidden_frames_called_hidden": 17
+      },
+      "truth_crop_fallbacks": 1,
+      "truth_crop_fallback_seed": 1101016
+    }
+  },
+  "hidden_range_interpretation": {
+    "success_definition": "the true level lies inside the reported range",
+    "frozen_holder_band_rows_full_inclusive": [
+      217,
+      275
+    ],
+    "surface_oval_margin_rows": 17,
+    "reported_range_rows_full_inclusive_endpoints": [
+      200,
+      292
+    ],
+    "rows_per_ml_for_reporting": 3.04,
+    "interpretation": "The approximately 30.3 mL interval is a large-error flag behind the holder, not a precise point estimate.",
+    "non_hidden_frames_called_hidden_total": 115
+  },
+  "large_visible_errors_new_exact_v4": [
+    {
+      "seed": 1101011,
+      "level_ml": 68.30571363170812,
+      "cases": [
+        "foam",
+        "sticker",
+        "edge"
+      ],
+      "truth_row": 277.0,
+      "predicted_row": 206.0,
+      "predicted_minus_truth_rows": -71.0,
+      "absolute_error_rows": 71.0,
+      "observation": "The predicted surface was 71 rows above the truth in a foam, sticker and edge frame."
+    },
+    {
+      "seed": 1101046,
+      "level_ml": 46.4778149152794,
+      "cases": [
+        "sticker",
+        "edge"
+      ],
+      "truth_row": 286.0,
+      "predicted_row": 355.0,
+      "predicted_minus_truth_rows": 69.0,
+      "absolute_error_rows": 69.0,
+      "observation": "The predicted surface was 69 rows below the truth in a sticker and edge frame."
+    },
+    {
+      "seed": 1101045,
+      "level_ml": 42.58642083350251,
+      "cases": [
+        "foam",
+        "edge"
+      ],
+      "truth_row": 326.0,
+      "predicted_row": 293.0,
+      "predicted_minus_truth_rows": -33.0,
+      "absolute_error_rows": 33.0,
+      "observation": "The predicted surface was 33 rows above the truth in a foam and edge frame."
+    },
+    {
+      "seed": 1101000,
+      "level_ml": 20.502336716684137,
+      "cases": [
+        "foam"
+      ],
+      "truth_row": 384.0,
+      "predicted_row": 356.0,
+      "predicted_minus_truth_rows": -28.0,
+      "absolute_error_rows": 28.0,
+      "observation": "The predicted surface was 28 rows above the truth in a foam frame."
+    },
+    {
+      "seed": 1101050,
+      "level_ml": 3.3081266363571005,
+      "cases": [
+        "foam"
+      ],
+      "truth_row": 423.0,
+      "predicted_row": 400.0,
+      "predicted_minus_truth_rows": -23.0,
+      "absolute_error_rows": 23.0,
+      "observation": "The predicted surface was 23 rows above the truth in a low-level foam frame."
+    },
+    {
+      "seed": 1101016,
+      "level_ml": 4.1439950938111325,
+      "cases": [
+        "foam",
+        "sticker"
+      ],
+      "truth_row": 427.0,
+      "predicted_row": 411.0,
+      "predicted_minus_truth_rows": -16.0,
+      "absolute_error_rows": 16.0,
+      "truth_source": "label_same_columns_full_crop_fallback",
+      "observation": "The predicted surface was 16 rows above the crop-edge truth in a foam and sticker frame; this is the one truth-crop fallback."
+    },
+    {
+      "seed": 1101009,
+      "level_ml": 44.26340423530284,
+      "cases": [
+        "foam",
+        "sticker",
+        "edge"
+      ],
+      "truth_row": 321.0,
+      "predicted_row": 311.0,
+      "predicted_minus_truth_rows": -10.0,
+      "absolute_error_rows": 10.0,
+      "observation": "The predicted surface was 10 rows above the truth in a foam, sticker and edge frame."
+    },
+    {
+      "seed": 1101026,
+      "level_ml": 77.10867720218012,
+      "cases": [
+        "foam",
+        "sticker"
+      ],
+      "truth_row": 214.0,
+      "predicted_row": 204.0,
+      "predicted_minus_truth_rows": -10.0,
+      "absolute_error_rows": 10.0,
+      "observation": "The predicted surface was 10 rows above the truth in a foam and sticker frame."
+    }
+  ],
+  "darkened_supplemental": {
+    "old_step6_hidden_success": {
+      "successful_frames": 71,
+      "ground_truth_hidden_frames": 72,
+      "rate": 0.9861111111111112
+    },
+    "new_exact_v4_hidden_success": {
+      "successful_frames": 18,
+      "ground_truth_hidden_frames": 18,
+      "rate": 1.0
+    },
+    "measured_post_transform_per_frame_liquid_mean_hsv": {
+      "saturation": {
+        "p05": 0.03259101886270473,
+        "median": 0.19160501003133193,
+        "p95": 0.7194499632511415
+      },
+      "value": {
+        "p05": 0.05249380635986451,
+        "median": 0.070974899661275,
+        "p95": 0.08788286640589954
+      }
+    }
+  },
+  "integrity_counters": {
+    "train_manifests_opened": 0,
+    "train_images_loaded": 0,
+    "test_manifests_opened": 0,
+    "test_images_loaded": 0,
+    "real_frames_loaded": 0
+  },
+  "disclosure": "Both frozen validation gates failed. The one calibration run nevertheless proceeded under the user's explicit decision; no validation threshold, rule setting or model weight was changed.",
+  "next_action": "The checkpoint review authorizes Step 9 and Step 10 back-to-back with the model and rule unchanged, stopping after Step 10."
+}

@@ -1,0 +1,5031 @@
+{
+  "analysis_mode": "v4-look-60",
+  "breakdowns": {
+    "darkness_band": {
+      "dark": {
+        "frame_count": 40,
+        "rendered_liquid_hsv": {
+          "eligible_frame_count": 40,
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.204439171122532,
+          "saturation": {
+            "count": 40,
+            "max": 0.2927426664432057,
+            "mean": 0.1370733521388278,
+            "median": 0.1349151158138457,
+            "min": 0.03112594473396315,
+            "p05": 0.033711440991447864,
+            "p95": 0.2790061520245542
+          },
+          "saturation_0_30_to_0_85": {
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.3,
+              0.85
+            ]
+          },
+          "value": {
+            "count": 40,
+            "max": 0.2158775083505444,
+            "mean": 0.14223585664675414,
+            "median": 0.13711689275959144,
+            "min": 0.1111052334602906,
+            "p05": 0.1158536325190866,
+            "p95": 0.17703313365783407
+          },
+          "value_0_05_to_0_09": {
+            "above_range_count": 40,
+            "below_range_count": 0,
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.05,
+              0.09
+            ]
+          }
+        }
+      },
+      "very_dark": {
+        "frame_count": 20,
+        "rendered_liquid_hsv": {
+          "eligible_frame_count": 20,
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.23145243760145967,
+          "saturation": {
+            "count": 20,
+            "max": 0.0945921095961169,
+            "mean": 0.048195896769193725,
+            "median": 0.04234258402955275,
+            "min": 0.020833476706093493,
+            "p05": 0.026292761004154536,
+            "p95": 0.08432519928382982
+          },
+          "saturation_0_30_to_0_85": {
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.3,
+              0.85
+            ]
+          },
+          "value": {
+            "count": 20,
+            "max": 0.25681440345230094,
+            "mean": 0.12372788117216633,
+            "median": 0.11476562511019327,
+            "min": 0.0985282235706025,
+            "p05": 0.09950519063929757,
+            "p95": 0.16964884126388674
+          },
+          "value_0_05_to_0_09": {
+            "above_range_count": 20,
+            "below_range_count": 0,
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.05,
+              0.09
+            ]
+          }
+        }
+      }
+    },
+    "hue_family": {
+      "blue": {
+        "frame_count": 10,
+        "rendered_liquid_hsv": {
+          "eligible_frame_count": 10,
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.553511030656579,
+          "saturation": {
+            "count": 10,
+            "max": 0.2788027639451507,
+            "mean": 0.10477137066613267,
+            "median": 0.06514774296023221,
+            "min": 0.031811778777207436,
+            "p05": 0.03286228532979531,
+            "p95": 0.23255148631078867
+          },
+          "saturation_0_30_to_0_85": {
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.3,
+              0.85
+            ]
+          },
+          "value": {
+            "count": 10,
+            "max": 0.17217531718569778,
+            "mean": 0.1369949132795676,
+            "median": 0.13651448056036453,
+            "min": 0.09955660995870257,
+            "p05": 0.10288888047282775,
+            "p95": 0.1708828679011087
+          },
+          "value_0_05_to_0_09": {
+            "above_range_count": 10,
+            "below_range_count": 0,
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.05,
+              0.09
+            ]
+          }
+        }
+      },
+      "brown": {
+        "frame_count": 13,
+        "rendered_liquid_hsv": {
+          "eligible_frame_count": 13,
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.08409556133471491,
+          "saturation": {
+            "count": 13,
+            "max": 0.27336676482767575,
+            "mean": 0.12561136485845928,
+            "median": 0.12529100552853517,
+            "min": 0.027527464461415175,
+            "p05": 0.034155658522692846,
+            "p95": 0.2373506376461667
+          },
+          "saturation_0_30_to_0_85": {
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.3,
+              0.85
+            ]
+          },
+          "value": {
+            "count": 13,
+            "max": 0.25681440345230094,
+            "mean": 0.14900863605600562,
+            "median": 0.1359261173713774,
+            "min": 0.0985282235706025,
+            "p05": 0.1068759823538694,
+            "p95": 0.23225226639124696
+          },
+          "value_0_05_to_0_09": {
+            "above_range_count": 13,
+            "below_range_count": 0,
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.05,
+              0.09
+            ]
+          }
+        }
+      },
+      "dark_green": {
+        "frame_count": 11,
+        "rendered_liquid_hsv": {
+          "eligible_frame_count": 11,
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.29744785334664975,
+          "saturation": {
+            "count": 11,
+            "max": 0.2828705255332211,
+            "mean": 0.13094093180230534,
+            "median": 0.13357434320304665,
+            "min": 0.03274821654013157,
+            "p05": 0.03612137487847965,
+            "p95": 0.2653226968673018
+          },
+          "saturation_0_30_to_0_85": {
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.3,
+              0.85
+            ]
+          },
+          "value": {
+            "count": 11,
+            "max": 0.17663433077295598,
+            "mean": 0.13368014222744176,
+            "median": 0.1287157651264259,
+            "min": 0.10243099637936709,
+            "p05": 0.10542121920025621,
+            "p95": 0.17062161122898611
+          },
+          "value_0_05_to_0_09": {
+            "above_range_count": 11,
+            "below_range_count": 0,
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.05,
+              0.09
+            ]
+          }
+        }
+      },
+      "near_black": {
+        "frame_count": 18,
+        "rendered_liquid_hsv": {
+          "eligible_frame_count": 18,
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.21123841670217922,
+          "saturation": {
+            "count": 18,
+            "max": 0.10337214303062552,
+            "mean": 0.05749158505580993,
+            "median": 0.04785547399744805,
+            "min": 0.020833476706093493,
+            "p05": 0.025718099499095478,
+            "p95": 0.10265736741410567
+          },
+          "saturation_0_30_to_0_85": {
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.3,
+              0.85
+            ]
+          },
+          "value": {
+            "count": 18,
+            "max": 0.1606705386881004,
+            "mean": 0.13089795689942707,
+            "median": 0.1331364563263656,
+            "min": 0.10179665940450254,
+            "p05": 0.10702804648554949,
+            "p95": 0.1583374440202227
+          },
+          "value_0_05_to_0_09": {
+            "above_range_count": 18,
+            "below_range_count": 0,
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.05,
+              0.09
+            ]
+          }
+        }
+      },
+      "olive": {
+        "frame_count": 8,
+        "rendered_liquid_hsv": {
+          "eligible_frame_count": 8,
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.18002684833595145,
+          "saturation": {
+            "count": 8,
+            "max": 0.2927426664432057,
+            "mean": 0.16137397378571897,
+            "median": 0.15771578847556705,
+            "min": 0.08378483558318313,
+            "p05": 0.08594693349104432,
+            "p95": 0.2564865840909289
+          },
+          "saturation_0_30_to_0_85": {
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.3,
+              0.85
+            ]
+          },
+          "value": {
+            "count": 8,
+            "max": 0.1568614527702661,
+            "mean": 0.12878571238727463,
+            "median": 0.12448680452573185,
+            "min": 0.1111052334602906,
+            "p05": 0.11288153568474618,
+            "p95": 0.15284756566554372
+          },
+          "value_0_05_to_0_09": {
+            "above_range_count": 8,
+            "below_range_count": 0,
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.05,
+              0.09
+            ]
+          }
+        }
+      }
+    },
+    "saturation_band": {
+      "not_authored_v4": {
+        "frame_count": 60,
+        "rendered_liquid_hsv": {
+          "eligible_frame_count": 60,
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.21005857948064519,
+          "saturation": {
+            "count": 60,
+            "max": 0.2927426664432057,
+            "mean": 0.1074475336822831,
+            "median": 0.08979035112626643,
+            "min": 0.020833476706093493,
+            "p05": 0.03094602072033575,
+            "p95": 0.2736385647835495
+          },
+          "saturation_0_30_to_0_85": {
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.3,
+              0.85
+            ]
+          },
+          "value": {
+            "count": 60,
+            "max": 0.25681440345230094,
+            "mean": 0.13606653148855818,
+            "median": 0.13179171660280986,
+            "min": 0.0985282235706025,
+            "p05": 0.10239927953062386,
+            "p95": 0.17703313365783407
+          },
+          "value_0_05_to_0_09": {
+            "above_range_count": 60,
+            "below_range_count": 0,
+            "count": 0,
+            "fraction_of_eligible": 0.0,
+            "range_inclusive": [
+              0.05,
+              0.09
+            ]
+          }
+        }
+      }
+    }
+  },
+  "evidence_label": "measured synthetic render",
+  "frames": [
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.19685259335133626,
+        "empty": 0.4124220132228327,
+        "foam": 0.0,
+        "liquid": 0.39072539342583107
+      },
+      "class_pixel_counts": {
+        "blocked": 4228,
+        "empty": 8858,
+        "foam": 0,
+        "ignore": 285722,
+        "liquid": 8392
+      },
+      "frame_index": 0,
+      "level_ml": 70.0565702723033,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.9685653618990142,
+        "mean_saturation": 0.05577203829380995,
+        "mean_value": 0.11338249313071273,
+        "pixel_count": 8392
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.8817638746797035,
+          0.2832393943875228,
+          0.20256536453765536
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00000-train-0104000.png",
+          "sha256": "6e48b7a140cf52b903306ba1561cce4f64e86446ffe29a71f18d727cb59bea1f"
+        },
+        "rgb": {
+          "path": "rgb/00000-train-0104000.png",
+          "sha256": "0baddc7af733b708b50a7f4c0cdd81083ebfdd30ee6de0f5d3e81bcb6774739e"
+        }
+      },
+      "role": "train",
+      "seed": 104000,
+      "vial_bbox_xyxy": [
+        275,
+        66,
+        342,
+        444
+      ],
+      "vial_pixel_count": 21478
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.23059928196630766,
+        "empty": 0.5372825186412593,
+        "foam": 0.05601583356347234,
+        "liquid": 0.1761023658289607
+      },
+      "class_pixel_counts": {
+        "blocked": 5010,
+        "empty": 11673,
+        "foam": 1217,
+        "ignore": 285474,
+        "liquid": 3826
+      },
+      "frame_index": 1,
+      "level_ml": 30.63422025503608,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.26176217984416317,
+        "mean_saturation": 0.03414623778295826,
+        "mean_value": 0.10696165554564743,
+        "pixel_count": 3826
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.5610768408091995,
+          0.5261829872956186,
+          0.09120489663134525
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00001-train-0104001.png",
+          "sha256": "d8eec8e1e151b782b8d6e8f8e9d817989180c151fb0ef4745eebcf20ffc3421f"
+        },
+        "rgb": {
+          "path": "rgb/00001-train-0104001.png",
+          "sha256": "0d93928c086ba875e3cb134c35413a5bc08f346395f7ada5a7ad2a063e0d944d"
+        }
+      },
+      "role": "train",
+      "seed": 104001,
+      "vial_bbox_xyxy": [
+        276,
+        63,
+        343,
+        444
+      ],
+      "vial_pixel_count": 21726
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2588345424760122,
+        "empty": 0.3846009829159841,
+        "foam": 0.08045869412590685,
+        "liquid": 0.2761057804820969
+      },
+      "class_pixel_counts": {
+        "blocked": 5530,
+        "empty": 8217,
+        "foam": 1719,
+        "ignore": 285835,
+        "liquid": 5899
+      },
+      "frame_index": 2,
+      "level_ml": 45.90325348307614,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.1930042683600887,
+        "mean_saturation": 0.18915385972241502,
+        "mean_value": 0.1453932038996307,
+        "pixel_count": 5899
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.19471353393661117,
+          0.830312568409634,
+          0.24832080832686246
+        ],
+        "hue_family": "olive",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00002-train-0104002.png",
+          "sha256": "f2558c4e2340dc16d84288741ac7892d0506ae442ee8a8286fa02ea8ed43a35e"
+        },
+        "rgb": {
+          "path": "rgb/00002-train-0104002.png",
+          "sha256": "5a36d8e1712cb95f130c6dbfa586d9fdc15d448f5c94d5229da38237a70255b9"
+        }
+      },
+      "role": "train",
+      "seed": 104002,
+      "vial_bbox_xyxy": [
+        277,
+        65,
+        344,
+        443
+      ],
+      "vial_pixel_count": 21365
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2748558916841682,
+        "empty": 0.4068546405111935,
+        "foam": 0.06403324545332678,
+        "liquid": 0.2542562223513115
+      },
+      "class_pixel_counts": {
+        "blocked": 6151,
+        "empty": 9105,
+        "foam": 1433,
+        "ignore": 284821,
+        "liquid": 5690
+      },
+      "frame_index": 3,
+      "level_ml": 70.4762715234083,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.058347272693523335,
+        "mean_saturation": 0.1009680728734675,
+        "mean_value": 0.1359261173713774,
+        "pixel_count": 5690
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.022506897225801237,
+          0.32535696088958777,
+          0.2965296201675152
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00003-train-0104003.png",
+          "sha256": "0d2aa34c39f846eff0f853b36455ead7e125cb6f641ead8e805030dfb28e0f24"
+        },
+        "rgb": {
+          "path": "rgb/00003-train-0104003.png",
+          "sha256": "cb258f5e0a8d0768a4a038a4ae1412492423e2b7640d1b6a3b550ab3b1982c94"
+        }
+      },
+      "role": "train",
+      "seed": 104003,
+      "vial_bbox_xyxy": [
+        274,
+        59,
+        342,
+        446
+      ],
+      "vial_pixel_count": 22379
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12979049565661727,
+        "empty": 0.40799925674734056,
+        "foam": 0.08593858874901286,
+        "liquid": 0.3762716588470293
+      },
+      "class_pixel_counts": {
+        "blocked": 2794,
+        "empty": 8783,
+        "foam": 1850,
+        "ignore": 285673,
+        "liquid": 8100
+      },
+      "frame_index": 4,
+      "level_ml": 67.597671556149,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.20967848363210762,
+        "mean_saturation": 0.026580091756684063,
+        "mean_value": 0.10179665940450254,
+        "pixel_count": 8100
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.28825173796746484,
+          0.14852760148516683,
+          0.03843773318962962
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00004-train-0104004.png",
+          "sha256": "e69bf460c152da8f59b9bc01b8b25cdda7c211f7ee0ebf591ae78951b319c24b"
+        },
+        "rgb": {
+          "path": "rgb/00004-train-0104004.png",
+          "sha256": "534ad94f49701aabe0e53a9fdfd82b6a90809db7afa5521c86158b3b14d73479"
+        }
+      },
+      "role": "train",
+      "seed": 104004,
+      "vial_bbox_xyxy": [
+        279,
+        66,
+        346,
+        445
+      ],
+      "vial_pixel_count": 21527
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.21868047041729102,
+        "empty": 0.5150524451709576,
+        "foam": 0.0035871588793534035,
+        "liquid": 0.26267992553239794
+      },
+      "class_pixel_counts": {
+        "blocked": 4816,
+        "empty": 11343,
+        "foam": 79,
+        "ignore": 285177,
+        "liquid": 5785
+      },
+      "frame_index": 5,
+      "level_ml": 48.41361532957981,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.17260291252280985,
+        "mean_saturation": 0.03482270568442753,
+        "mean_value": 0.13745758977748404,
+        "pixel_count": 5785
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.8064609697504344,
+          0.00865824283087957,
+          0.2684903157339648
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00005-train-0104005.png",
+          "sha256": "4559be0ecba9009f3d36a68c530f337c830aa2cda9c5d64c07d13aae6b8b70dc"
+        },
+        "rgb": {
+          "path": "rgb/00005-train-0104005.png",
+          "sha256": "0d53d62b61e9d867090e8ea55b4a680666bcb7af04d9273216840d1162bbcd76"
+        }
+      },
+      "role": "train",
+      "seed": 104005,
+      "vial_bbox_xyxy": [
+        278,
+        64,
+        345,
+        447
+      ],
+      "vial_pixel_count": 22023
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.23380018674136321,
+        "empty": 0.4411764705882353,
+        "foam": 0.0,
+        "liquid": 0.3250233426704015
+      },
+      "class_pixel_counts": {
+        "blocked": 5008,
+        "empty": 9450,
+        "foam": 0,
+        "ignore": 285780,
+        "liquid": 6962
+      },
+      "frame_index": 6,
+      "level_ml": 44.27859988286504,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.30556562146959987,
+        "mean_saturation": 0.08840192123452105,
+        "mean_value": 0.14006117241495852,
+        "pixel_count": 6962
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.3673488944193607,
+          0.19625690505814652,
+          0.29437808700067913
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00006-train-0104006.png",
+          "sha256": "e370bb7aed875ccf7cce66d9420059442092b0d4985c5aa233764a1d32bcb971"
+        },
+        "rgb": {
+          "path": "rgb/00006-train-0104006.png",
+          "sha256": "3161259a584baba8a5c8ea2e762f929a38d8866271ea21e66390be5109f73fdb"
+        }
+      },
+      "role": "train",
+      "seed": 104006,
+      "vial_bbox_xyxy": [
+        277,
+        65,
+        344,
+        442
+      ],
+      "vial_pixel_count": 21420
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.23796970858895705,
+        "empty": 0.5204658742331288,
+        "foam": 0.0,
+        "liquid": 0.2415644171779141
+      },
+      "class_pixel_counts": {
+        "blocked": 4965,
+        "empty": 10859,
+        "foam": 0,
+        "ignore": 286336,
+        "liquid": 5040
+      },
+      "frame_index": 7,
+      "level_ml": 32.05792702091205,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.2108550606328576,
+        "mean_saturation": 0.08378483558318313,
+        "mean_value": 0.11890056022408964,
+        "pixel_count": 5040
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.2136247438821133,
+          0.8862799904661012,
+          0.057046159895234344
+        ],
+        "hue_family": "olive",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00007-train-0104007.png",
+          "sha256": "c08a2a94b6b6c37d75f8d08135e3d3fb219d488fd97a2092c40af5283e070b88"
+        },
+        "rgb": {
+          "path": "rgb/00007-train-0104007.png",
+          "sha256": "69e2da7994d67e2badecf2fdb7258ffb804c6bd6252a28fed71c24ea2c99c5a8"
+        }
+      },
+      "role": "train",
+      "seed": 104007,
+      "vial_bbox_xyxy": [
+        277,
+        70,
+        343,
+        443
+      ],
+      "vial_pixel_count": 20864
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2118790597691481,
+        "empty": 0.644375905416141,
+        "foam": 0.0,
+        "liquid": 0.14374503481471096
+      },
+      "class_pixel_counts": {
+        "blocked": 4534,
+        "empty": 13789,
+        "foam": 0,
+        "ignore": 285801,
+        "liquid": 3076
+      },
+      "frame_index": 8,
+      "level_ml": 16.17372818841319,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.09189165667903951,
+        "mean_saturation": 0.1576858327397055,
+        "mean_value": 0.2158775083505444,
+        "pixel_count": 3076
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.06619780685021587,
+          0.43867899874359495,
+          0.3322504966323993
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00008-train-0104008.png",
+          "sha256": "8e277a5e05a73b9b3c67d28412b3f0e25556d3b40c35200ab041d169d11a020a"
+        },
+        "rgb": {
+          "path": "rgb/00008-train-0104008.png",
+          "sha256": "2dba5cf0fd2691cfdf704f0de7411251a3ab02be49e078cadd7a52fd7de00c5c"
+        }
+      },
+      "role": "train",
+      "seed": 104008,
+      "vial_bbox_xyxy": [
+        274,
+        63,
+        341,
+        440
+      ],
+      "vial_pixel_count": 21399
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.13216424294268606,
+        "empty": 0.46877673224978617,
+        "foam": 0.039064727687482176,
+        "liquid": 0.3599942971200456
+      },
+      "class_pixel_counts": {
+        "blocked": 2781,
+        "empty": 9864,
+        "foam": 822,
+        "ignore": 286158,
+        "liquid": 7575
+      },
+      "frame_index": 9,
+      "level_ml": 59.843455432419645,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.581546566662881,
+        "mean_saturation": 0.10253123054060216,
+        "mean_value": 0.11598369248689576,
+        "pixel_count": 7575
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.6089634485854234,
+          0.4452969635395003,
+          0.27416410939820623
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00009-train-0104009.png",
+          "sha256": "c937f6a115b084ffa6854ccd172384720e3b7128d46f3753d8c22b1eef1ecf48"
+        },
+        "rgb": {
+          "path": "rgb/00009-train-0104009.png",
+          "sha256": "b30a11c6bcca29d37a3e806c20a696c2c0cc576fae83971bf0835fe02f0e38c9"
+        }
+      },
+      "role": "train",
+      "seed": 104009,
+      "vial_bbox_xyxy": [
+        278,
+        63,
+        344,
+        438
+      ],
+      "vial_pixel_count": 21042
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2096890817064353,
+        "empty": 0.6430766449746927,
+        "foam": 0.06801337671728128,
+        "liquid": 0.07922089660159075
+      },
+      "class_pixel_counts": {
+        "blocked": 4640,
+        "empty": 14230,
+        "foam": 1505,
+        "ignore": 285072,
+        "liquid": 1753
+      },
+      "frame_index": 10,
+      "level_ml": 15.499374917652213,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.24117855752544085,
+        "mean_saturation": 0.03274821654013157,
+        "mean_value": 0.1348120309161885,
+        "pixel_count": 1753
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.43723494623122167,
+          0.5611577310406102,
+          0.03727211691305727
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00010-train-0104010.png",
+          "sha256": "c9afa1d17d70bdcdc92302834b5714ab7383d5c0a580fcd0def67f174119cafc"
+        },
+        "rgb": {
+          "path": "rgb/00010-train-0104010.png",
+          "sha256": "8e1b4d879bff32d72f9e0d76d0b11f904efc9ff039633e0f98a02eac3c414e3e"
+        }
+      },
+      "role": "train",
+      "seed": 104010,
+      "vial_bbox_xyxy": [
+        276,
+        63,
+        344,
+        447
+      ],
+      "vial_pixel_count": 22128
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12999326210414863,
+        "empty": 0.6074694388295312,
+        "foam": 0.0907209548560978,
+        "liquid": 0.17181634421022235
+      },
+      "class_pixel_counts": {
+        "blocked": 2701,
+        "empty": 12622,
+        "foam": 1885,
+        "ignore": 286422,
+        "liquid": 3570
+      },
+      "frame_index": 11,
+      "level_ml": 30.76900953069308,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.2191497848039599,
+        "mean_saturation": 0.2927426664432057,
+        "mean_value": 0.13007304882737408,
+        "pixel_count": 3570
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.22732473933734892,
+          0.8483317187726362,
+          0.2866059062491377
+        ],
+        "hue_family": "olive",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00011-train-0104011.png",
+          "sha256": "4988ac5ca2792400ea158b79f41bb33ebfc3ab7830a5ba697be34e976d543229"
+        },
+        "rgb": {
+          "path": "rgb/00011-train-0104011.png",
+          "sha256": "a6283a45a9ebfbf78e705f288e5d8d720f9ffbac6f84de44911433fe6a3635da"
+        }
+      },
+      "role": "train",
+      "seed": 104011,
+      "vial_bbox_xyxy": [
+        276,
+        66,
+        342,
+        438
+      ],
+      "vial_pixel_count": 20778
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.28231387953610176,
+        "empty": 0.4556677890011223,
+        "foam": 0.06051253273475496,
+        "liquid": 0.20150579872802096
+      },
+      "class_pixel_counts": {
+        "blocked": 6037,
+        "empty": 9744,
+        "foam": 1294,
+        "ignore": 285816,
+        "liquid": 4309
+      },
+      "frame_index": 12,
+      "level_ml": 34.897658622405615,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.8083845950726896,
+        "mean_saturation": 0.03372429008924439,
+        "mean_value": 0.13677619574169886,
+        "pixel_count": 4309
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.7119275284639266,
+          0.2637232205145551,
+          0.2656092989504967
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00012-train-0104012.png",
+          "sha256": "1c0eac0c7ac22a9dd31a220ab94ce06ef8cd37a1df84eb4bd2a094709d410231"
+        },
+        "rgb": {
+          "path": "rgb/00012-train-0104012.png",
+          "sha256": "b7fdf374246588c1f38e2b7237eb84579710c7d47affd4060eba98512fce3a71"
+        }
+      },
+      "role": "train",
+      "seed": 104012,
+      "vial_bbox_xyxy": [
+        275,
+        62,
+        342,
+        439
+      ],
+      "vial_pixel_count": 21384
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.20553207837111026,
+        "empty": 0.4456396465616596,
+        "foam": 0.0,
+        "liquid": 0.34882827506723013
+      },
+      "class_pixel_counts": {
+        "blocked": 4280,
+        "empty": 9280,
+        "foam": 0,
+        "ignore": 286376,
+        "liquid": 7264
+      },
+      "frame_index": 13,
+      "level_ml": 66.80705365757899,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.12743155599883266,
+        "mean_saturation": 0.03857445456354463,
+        "mean_value": 0.11244115487604733,
+        "pixel_count": 7264
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.04642459550110526,
+          0.5095987481621477,
+          0.032178796405289214
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00013-train-0104013.png",
+          "sha256": "115373e85a0a9be4af57cb8a36135c08fe6bb4e032bf7949122158dd1010525c"
+        },
+        "rgb": {
+          "path": "rgb/00013-train-0104013.png",
+          "sha256": "9405da18a9e056aab6fb674366a73c0dcec10a4c91abc6f0e4559729ed3dae33"
+        }
+      },
+      "role": "train",
+      "seed": 104013,
+      "vial_bbox_xyxy": [
+        278,
+        69,
+        343,
+        441
+      ],
+      "vial_pixel_count": 20824
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.24101421008637502,
+        "empty": 0.3844153431782298,
+        "foam": 0.013095569796600724,
+        "liquid": 0.3614748769387945
+      },
+      "class_pixel_counts": {
+        "blocked": 5190,
+        "empty": 8278,
+        "foam": 282,
+        "ignore": 285666,
+        "liquid": 7784
+      },
+      "frame_index": 14,
+      "level_ml": 66.00614614824553,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.1327509318021963,
+        "mean_saturation": 0.18719092175598753,
+        "mean_value": 0.1111052334602906,
+        "pixel_count": 7784
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.12046494500280874,
+          0.7126209060424293,
+          0.2421523504018833
+        ],
+        "hue_family": "olive",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00014-train-0104014.png",
+          "sha256": "7c079a1ac10ca992f5eafd91fd7116ad98aef72f3474e4193b9d9d2df577e5fc"
+        },
+        "rgb": {
+          "path": "rgb/00014-train-0104014.png",
+          "sha256": "bb2a09a09492b33696baf1ce2646a9a3d81ce5706cf2a5d53167f6521632f7af"
+        }
+      },
+      "role": "train",
+      "seed": 104014,
+      "vial_bbox_xyxy": [
+        276,
+        66,
+        343,
+        445
+      ],
+      "vial_pixel_count": 21534
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.18907352606419303,
+        "empty": 0.47621215570225356,
+        "foam": 0.0848622809014341,
+        "liquid": 0.24985203733211928
+      },
+      "class_pixel_counts": {
+        "blocked": 4153,
+        "empty": 10460,
+        "foam": 1864,
+        "ignore": 285235,
+        "liquid": 5488
+      },
+      "frame_index": 15,
+      "level_ml": 42.03107743890783,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.06958164903034426,
+        "mean_saturation": 0.27336676482767575,
+        "mean_value": 0.14455210655690848,
+        "pixel_count": 5488
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.05322612001465589,
+          0.780562531608187,
+          0.27056860505374064
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00015-train-0104015.png",
+          "sha256": "d1919e61bdc7d96b2bd98addae318e6deb021820bb0747cf29a5936d70e57fc9"
+        },
+        "rgb": {
+          "path": "rgb/00015-train-0104015.png",
+          "sha256": "8ef45634772a5e3ed1bc8247c929195fa92843451d314bbaecb19390acc1b344"
+        }
+      },
+      "role": "train",
+      "seed": 104015,
+      "vial_bbox_xyxy": [
+        273,
+        61,
+        341,
+        443
+      ],
+      "vial_pixel_count": 21965
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.224072065273782,
+        "empty": 0.42041220581993116,
+        "foam": 0.0,
+        "liquid": 0.35551572890628685
+      },
+      "class_pixel_counts": {
+        "blocked": 4751,
+        "empty": 8914,
+        "foam": 0,
+        "ignore": 285997,
+        "liquid": 7538
+      },
+      "frame_index": 16,
+      "level_ml": 70.05345044920185,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.18921746588529453,
+        "mean_saturation": 0.043576337080707794,
+        "mean_value": 0.10930136979174797,
+        "pixel_count": 7538
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.2118947185952842,
+          0.3867159388984918,
+          0.053148282126051064
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00016-train-0104016.png",
+          "sha256": "69e9481aa00a378adbcc581f834ecfd266d2a64c7ff972054e11fb9425974dff"
+        },
+        "rgb": {
+          "path": "rgb/00016-train-0104016.png",
+          "sha256": "f8004b0a53ed568ac58303fd8026eb67c2692f797a1f23e7df87ae927098d525"
+        }
+      },
+      "role": "train",
+      "seed": 104016,
+      "vial_bbox_xyxy": [
+        278,
+        63,
+        345,
+        439
+      ],
+      "vial_pixel_count": 21203
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.24155632316254078,
+        "empty": 0.514920360775283,
+        "foam": 0.0005757052389176742,
+        "liquid": 0.2429476108232585
+      },
+      "class_pixel_counts": {
+        "blocked": 5035,
+        "empty": 10733,
+        "foam": 12,
+        "ignore": 286356,
+        "liquid": 5064
+      },
+      "frame_index": 17,
+      "level_ml": 42.41825156480138,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.663078982186134,
+        "mean_saturation": 0.176022146979902,
+        "mean_value": 0.14232413344484715,
+        "pixel_count": 5064
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.6664348124175397,
+          0.48809357132390874,
+          0.32027288137232474
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00017-train-0104017.png",
+          "sha256": "83aa3a3f05a4b1c6b147e62312fb7b90689c2f7cdf0becdf3f1b22a938ecd331"
+        },
+        "rgb": {
+          "path": "rgb/00017-train-0104017.png",
+          "sha256": "2c0acf800913e8a6188026506ffc6868cbaa376d2aca58e3d64bdfcb5f8cc8a7"
+        }
+      },
+      "role": "train",
+      "seed": 104017,
+      "vial_bbox_xyxy": [
+        274,
+        67,
+        340,
+        440
+      ],
+      "vial_pixel_count": 20844
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.21487987360007435,
+        "empty": 0.6813048933500627,
+        "foam": 0.0,
+        "liquid": 0.10381523304986291
+      },
+      "class_pixel_counts": {
+        "blocked": 4624,
+        "empty": 14661,
+        "foam": 0,
+        "ignore": 285681,
+        "liquid": 2234
+      },
+      "frame_index": 18,
+      "level_ml": 9.129810324504138,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.07963229334899455,
+        "mean_saturation": 0.12529100552853517,
+        "mean_value": 0.184610388470518,
+        "pixel_count": 2234
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.00236263865440457,
+          0.32494834387986954,
+          0.21204129085454881
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00018-train-0104018.png",
+          "sha256": "3ace9b417ae3719fc2a4eb37bdde6b1fb74412faf625d630eca6779e64aff7e0"
+        },
+        "rgb": {
+          "path": "rgb/00018-train-0104018.png",
+          "sha256": "13fe8f271b37156908c748b6417d9986a8bbdb8f61f68fce42adc6dcc6e18db5"
+        }
+      },
+      "role": "train",
+      "seed": 104018,
+      "vial_bbox_xyxy": [
+        275,
+        63,
+        342,
+        442
+      ],
+      "vial_pixel_count": 21519
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.25177255665230086,
+        "empty": 0.3949673293479772,
+        "foam": 0.0,
+        "liquid": 0.35326011399972196
+      },
+      "class_pixel_counts": {
+        "blocked": 5433,
+        "empty": 8523,
+        "foam": 0,
+        "ignore": 285621,
+        "liquid": 7623
+      },
+      "frame_index": 19,
+      "level_ml": 63.01586274675876,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.12659548680623714,
+        "mean_saturation": 0.048981237202055675,
+        "mean_value": 0.11834669588680286,
+        "pixel_count": 7623
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.098939238749251,
+          0.8313528131619257,
+          0.04833311147916765
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00019-train-0104019.png",
+          "sha256": "9154cbaa9975d20591f3ea46c731d41acb32b420c4dd55478877a2918ccedb79"
+        },
+        "rgb": {
+          "path": "rgb/00019-train-0104019.png",
+          "sha256": "32b928cb63f2958ebf8a2f92b42553bb3ec71fbdf1e3535540c3e1a75da00574"
+        }
+      },
+      "role": "train",
+      "seed": 104019,
+      "vial_bbox_xyxy": [
+        277,
+        63,
+        344,
+        442
+      ],
+      "vial_pixel_count": 21579
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.23146292585170342,
+        "empty": 0.5110220440881763,
+        "foam": 0.0,
+        "liquid": 0.2575150300601202
+      },
+      "class_pixel_counts": {
+        "blocked": 4851,
+        "empty": 10710,
+        "foam": 0,
+        "ignore": 286242,
+        "liquid": 5397
+      },
+      "frame_index": 20,
+      "level_ml": 42.01917734755713,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.6011247301419348,
+        "mean_saturation": 0.1689555994768592,
+        "mean_value": 0.16930320766438872,
+        "pixel_count": 5397
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.6143399930063519,
+          0.6524153889582271,
+          0.2970141075891629
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00020-train-0104020.png",
+          "sha256": "f0c5829735c61f1683ab8dbc092815911c2ed275983167c06aaebd3028d4b287"
+        },
+        "rgb": {
+          "path": "rgb/00020-train-0104020.png",
+          "sha256": "116808ae66ca46de2b9c21b1c16b37d7982ac72448505e8bcb70b87a21ce8d55"
+        }
+      },
+      "role": "train",
+      "seed": 104020,
+      "vial_bbox_xyxy": [
+        277,
+        68,
+        343,
+        442
+      ],
+      "vial_pixel_count": 20958
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.23237660050454567,
+        "empty": 0.43828835261078586,
+        "foam": 0.06321100480746347,
+        "liquid": 0.266124042077205
+      },
+      "class_pixel_counts": {
+        "blocked": 4882,
+        "empty": 9208,
+        "foam": 1328,
+        "ignore": 286191,
+        "liquid": 5591
+      },
+      "frame_index": 21,
+      "level_ml": 67.26016599115543,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.2087138819620515,
+        "mean_saturation": 0.03346730813331389,
+        "mean_value": 0.13141007431411128,
+        "pixel_count": 5591
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.3824403834703395,
+          0.03901943094661512,
+          0.29153520542413874
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00021-train-0104021.png",
+          "sha256": "23002b028351f71028786c3d253cd29896d861e92b949a6edc0ecf12099b197e"
+        },
+        "rgb": {
+          "path": "rgb/00021-train-0104021.png",
+          "sha256": "6217a3eb416d843d9419e353a07381c638fc46095d188050bb2e04f537788f12"
+        }
+      },
+      "role": "train",
+      "seed": 104021,
+      "vial_bbox_xyxy": [
+        274,
+        65,
+        340,
+        439
+      ],
+      "vial_pixel_count": 21009
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.24520155802712468,
+        "empty": 0.5164953775400065,
+        "foam": 0.0,
+        "liquid": 0.23830306443286875
+      },
+      "class_pixel_counts": {
+        "blocked": 5225,
+        "empty": 11006,
+        "foam": 0,
+        "ignore": 285891,
+        "liquid": 5078
+      },
+      "frame_index": 22,
+      "level_ml": 44.24454701882808,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.17736472552708094,
+        "mean_saturation": 0.047818784050535475,
+        "mean_value": 0.11797295523171854,
+        "pixel_count": 5078
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.6441038632035069,
+          0.3121772725767411,
+          0.03781408458065367
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00022-train-0104022.png",
+          "sha256": "e25ab057671e919160b48939a9a6c751e3ba1e3d527bac67ceb2ba729bba67cb"
+        },
+        "rgb": {
+          "path": "rgb/00022-train-0104022.png",
+          "sha256": "b23fe06f152f017f4de2ff23932bc2641eb80ceab716b119e346551e283fca42"
+        }
+      },
+      "role": "train",
+      "seed": 104022,
+      "vial_bbox_xyxy": [
+        274,
+        68,
+        340,
+        445
+      ],
+      "vial_pixel_count": 21309
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.13203883495145632,
+        "empty": 0.4166232536111769,
+        "foam": 0.07013971110584892,
+        "liquid": 0.38119820033151786
+      },
+      "class_pixel_counts": {
+        "blocked": 2788,
+        "empty": 8797,
+        "foam": 1481,
+        "ignore": 286085,
+        "liquid": 8049
+      },
+      "frame_index": 23,
+      "level_ml": 68.37334657498477,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.45501876903422767,
+        "mean_saturation": 0.08427595981763515,
+        "mean_value": 0.14068000165652048,
+        "pixel_count": 8049
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.485821472740976,
+          0.3554127966696056,
+          0.3017451547627499
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00023-train-0104023.png",
+          "sha256": "76913d94b0de8fdd45caafcae5b38c4f6749440c2e8fbf8cff9166a00359e603"
+        },
+        "rgb": {
+          "path": "rgb/00023-train-0104023.png",
+          "sha256": "310e6af92c6161bd6083ebe02897059946fcfeee1ad680117e94eafb491a14a1"
+        }
+      },
+      "role": "train",
+      "seed": 104023,
+      "vial_bbox_xyxy": [
+        277,
+        67,
+        343,
+        442
+      ],
+      "vial_pixel_count": 21115
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.13058306858531116,
+        "empty": 0.659736497850869,
+        "foam": 0.0,
+        "liquid": 0.20968043356381985
+      },
+      "class_pixel_counts": {
+        "blocked": 2795,
+        "empty": 14121,
+        "foam": 0,
+        "ignore": 285796,
+        "liquid": 4488
+      },
+      "frame_index": 24,
+      "level_ml": 27.115638653034335,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.2719973580221623,
+        "mean_saturation": 0.15032854884615948,
+        "mean_value": 0.16460889168501625,
+        "pixel_count": 4488
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.2816134865453934,
+          0.3724765133065822,
+          0.3468736510446069
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00024-train-0104024.png",
+          "sha256": "5ac7f0ae6e6b0f5baf7657a57b3833c9573070a909f395c05fd70c0145e84e8c"
+        },
+        "rgb": {
+          "path": "rgb/00024-train-0104024.png",
+          "sha256": "04ad230abb3dd78407499b565a85b8edd9b1c9c065da4c76b194660196ed0129"
+        }
+      },
+      "role": "train",
+      "seed": 104024,
+      "vial_bbox_xyxy": [
+        277,
+        64,
+        343,
+        442
+      ],
+      "vial_pixel_count": 21404
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.19405118745676736,
+        "empty": 0.4635001152870648,
+        "foam": 0.0,
+        "liquid": 0.34244869725616783
+      },
+      "class_pixel_counts": {
+        "blocked": 4208,
+        "empty": 10051,
+        "foam": 0,
+        "ignore": 285515,
+        "liquid": 7426
+      },
+      "frame_index": 25,
+      "level_ml": 54.48202808500206,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.12337965427923217,
+        "mean_saturation": 0.06749012394739393,
+        "mean_value": 0.0985282235706025,
+        "pixel_count": 7426
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.059218856796247624,
+          0.8478853761754661,
+          0.05436627892359739
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00025-train-0104025.png",
+          "sha256": "e556f8da6378fb0ef350bbb131429efdd8de2b482a74e97875ca8580f3c94a7f"
+        },
+        "rgb": {
+          "path": "rgb/00025-train-0104025.png",
+          "sha256": "71ab5365fa333cd6516cd06e32f74b614815c4a983707a49f2565e82c93b2568"
+        }
+      },
+      "role": "train",
+      "seed": 104025,
+      "vial_bbox_xyxy": [
+        276,
+        63,
+        343,
+        443
+      ],
+      "vial_pixel_count": 21685
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12210467446520949,
+        "empty": 0.4273663606282332,
+        "foam": 0.06473411940159389,
+        "liquid": 0.3857948455049634
+      },
+      "class_pixel_counts": {
+        "blocked": 2620,
+        "empty": 9170,
+        "foam": 1389,
+        "ignore": 285743,
+        "liquid": 8278
+      },
+      "frame_index": 26,
+      "level_ml": 69.0171268318148,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.2718073482639146,
+        "mean_saturation": 0.24777486820138245,
+        "mean_value": 0.15208561317738017,
+        "pixel_count": 8278
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.27853521029075373,
+          0.8184953563456112,
+          0.29354066738503237
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00026-train-0104026.png",
+          "sha256": "e01504683c318e7e4c423814990e4e2962bdbc18700a72f3fe3f54b1ca6f2f77"
+        },
+        "rgb": {
+          "path": "rgb/00026-train-0104026.png",
+          "sha256": "27f4144771471bc7eec7a4868e02bfed90bd843f8ce18a46e3ebd35cb8366e85"
+        }
+      },
+      "role": "train",
+      "seed": 104026,
+      "vial_bbox_xyxy": [
+        275,
+        62,
+        342,
+        440
+      ],
+      "vial_pixel_count": 21457
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2748095149600446,
+        "empty": 0.34352350864151643,
+        "foam": 0.0,
+        "liquid": 0.38166697639843894
+      },
+      "class_pixel_counts": {
+        "blocked": 5915,
+        "empty": 7394,
+        "foam": 0,
+        "ignore": 285676,
+        "liquid": 8215
+      },
+      "frame_index": 27,
+      "level_ml": 71.53564727373683,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.03381742724673611,
+        "mean_saturation": 0.17812946125749787,
+        "mean_value": 0.1486281670306589,
+        "pixel_count": 8215
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.012348915251474524,
+          0.46549095081395514,
+          0.3495169057645469
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00027-train-0104027.png",
+          "sha256": "a3e8d016acd5b0f9a7c4e6021aa25f543af57e14e66812e9b43d0909be87096c"
+        },
+        "rgb": {
+          "path": "rgb/00027-train-0104027.png",
+          "sha256": "f1d548bbf7c6eb1c8f6c3dbd8f061f9fe208e31957d74d7258607fcd5898fdcc"
+        }
+      },
+      "role": "train",
+      "seed": 104027,
+      "vial_bbox_xyxy": [
+        273,
+        64,
+        340,
+        443
+      ],
+      "vial_pixel_count": 21524
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.1320754716981132,
+        "empty": 0.41081697637944964,
+        "foam": 0.0,
+        "liquid": 0.4571075519224371
+      },
+      "class_pixel_counts": {
+        "blocked": 2779,
+        "empty": 8644,
+        "foam": 0,
+        "ignore": 286159,
+        "liquid": 9618
+      },
+      "frame_index": 28,
+      "level_ml": 70.4783854670011,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.4202826788048675,
+        "mean_saturation": 0.031811778777207436,
+        "mean_value": 0.11674393192502622,
+        "pixel_count": 9618
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.5980658850211664,
+          0.561614435444338,
+          0.03242357786244027
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00028-train-0104028.png",
+          "sha256": "d11fabe1a6df03db11a120ffdce8be17c7c3fd76b5d5bd5fdb8da87f7acc7b70"
+        },
+        "rgb": {
+          "path": "rgb/00028-train-0104028.png",
+          "sha256": "f892fbfa462b5e912594ecc095d10b2578c375aba5276587470ae00c7490eb62"
+        }
+      },
+      "role": "train",
+      "seed": 104028,
+      "vial_bbox_xyxy": [
+        274,
+        69,
+        340,
+        443
+      ],
+      "vial_pixel_count": 21041
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2658115089969713,
+        "empty": 0.36584714056654194,
+        "foam": 0.0,
+        "liquid": 0.36834135043648675
+      },
+      "class_pixel_counts": {
+        "blocked": 5968,
+        "empty": 8214,
+        "foam": 0,
+        "ignore": 284748,
+        "liquid": 8270
+      },
+      "frame_index": 29,
+      "level_ml": 69.21827239213174,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.2102100743843067,
+        "mean_saturation": 0.132725671652754,
+        "mean_value": 0.11618038267302083,
+        "pixel_count": 8270
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.21370153617393417,
+          0.39384260539820304,
+          0.2981061421567425
+        ],
+        "hue_family": "olive",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00029-train-0104029.png",
+          "sha256": "0ee595d5f9007687821ddb433b331c95f20d176a4985073567d25e3dbd6a1755"
+        },
+        "rgb": {
+          "path": "rgb/00029-train-0104029.png",
+          "sha256": "c75ae62d5a9756adfe161e286acb0b5ce7d649a9c23286eea286c8075aa3514c"
+        }
+      },
+      "role": "train",
+      "seed": 104029,
+      "vial_bbox_xyxy": [
+        272,
+        60,
+        340,
+        446
+      ],
+      "vial_pixel_count": 22452
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.18897864974033468,
+        "empty": 0.44316214656664743,
+        "foam": 0.0,
+        "liquid": 0.3678592036930179
+      },
+      "class_pixel_counts": {
+        "blocked": 3930,
+        "empty": 9216,
+        "foam": 0,
+        "ignore": 286404,
+        "liquid": 7650
+      },
+      "frame_index": 30,
+      "level_ml": 66.81912957993926,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.640115263670333,
+        "mean_saturation": 0.1387520787498515,
+        "mean_value": 0.17217531718569778,
+        "pixel_count": 7650
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.6460979683903953,
+          0.6662356362454471,
+          0.26616875834951803
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00030-train-0104030.png",
+          "sha256": "cdd5443a0c59af7b5c9f429aefbf5f169b553c441a199b574234de93a91c8ade"
+        },
+        "rgb": {
+          "path": "rgb/00030-train-0104030.png",
+          "sha256": "a57294bb20067db2d26e2152163f8ebcd0c6ca536907afcc12e3abdff977f043"
+        }
+      },
+      "role": "train",
+      "seed": 104030,
+      "vial_bbox_xyxy": [
+        278,
+        65,
+        344,
+        437
+      ],
+      "vial_pixel_count": 20796
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2846940141945275,
+        "empty": 0.5704593134848012,
+        "foam": 0.0,
+        "liquid": 0.14484667232067133
+      },
+      "class_pixel_counts": {
+        "blocked": 6378,
+        "empty": 12780,
+        "foam": 0,
+        "ignore": 284797,
+        "liquid": 3245
+      },
+      "frame_index": 31,
+      "level_ml": 16.386788440642903,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.5323632425620808,
+        "mean_saturation": 0.08022686742416221,
+        "mean_value": 0.1650611800960754,
+        "pixel_count": 3245
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.648141735826893,
+          0.7998514983403893,
+          0.033668275858872145
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00031-train-0104031.png",
+          "sha256": "bc8c396092d8399f4077132de4d923e1d7a5b9166412e8ca85d5786043a7f929"
+        },
+        "rgb": {
+          "path": "rgb/00031-train-0104031.png",
+          "sha256": "49fce720a45351d94c208e62d878ee5418f259cd2dd92e737c51c4232f6af6dc"
+        }
+      },
+      "role": "train",
+      "seed": 104031,
+      "vial_bbox_xyxy": [
+        275,
+        57,
+        343,
+        444
+      ],
+      "vial_pixel_count": 22403
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12875378822665076,
+        "empty": 0.6749931123151804,
+        "foam": 0.0,
+        "liquid": 0.1962530994581688
+      },
+      "class_pixel_counts": {
+        "blocked": 2804,
+        "empty": 14700,
+        "foam": 0,
+        "ignore": 285422,
+        "liquid": 4274
+      },
+      "frame_index": 32,
+      "level_ml": 24.979648050540085,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.2825075600676364,
+        "mean_saturation": 0.09386508296557895,
+        "mean_value": 0.1606705386881004,
+        "pixel_count": 4274
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.33932192923135707,
+          0.2276539786368205,
+          0.26550986985284536
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00032-train-0104032.png",
+          "sha256": "5f74587752fddb188298fb19cbe5767e0209c29084956cf5cc10c998398a0bfe"
+        },
+        "rgb": {
+          "path": "rgb/00032-train-0104032.png",
+          "sha256": "d3fd25c97bd4cc2b331260d5bccbedead0114bd43e776e92bbc9711c8a91b539"
+        }
+      },
+      "role": "train",
+      "seed": 104032,
+      "vial_bbox_xyxy": [
+        278,
+        61,
+        345,
+        442
+      ],
+      "vial_pixel_count": 21778
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12946348465817334,
+        "empty": 0.5640139960523954,
+        "foam": 0.06598779831329625,
+        "liquid": 0.24053472097613493
+      },
+      "class_pixel_counts": {
+        "blocked": 2886,
+        "empty": 12573,
+        "foam": 1471,
+        "ignore": 284908,
+        "liquid": 5362
+      },
+      "frame_index": 33,
+      "level_ml": 41.19579845021931,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.3039875709280335,
+        "mean_saturation": 0.2828705255332211,
+        "mean_value": 0.12843685777182937,
+        "pixel_count": 5362
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.32135508570187926,
+          0.8919765003279694,
+          0.2297709970190198
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00033-train-0104033.png",
+          "sha256": "2c450c62a627c0a052036e97523a37047fea09472a8a9af616c576e3ae393e93"
+        },
+        "rgb": {
+          "path": "rgb/00033-train-0104033.png",
+          "sha256": "98c1ba06a3a41a6bd86f7e7a08cd3b18c25325684ba7f5195ed22b7d28f81a80"
+        }
+      },
+      "role": "train",
+      "seed": 104033,
+      "vial_bbox_xyxy": [
+        274,
+        58,
+        342,
+        444
+      ],
+      "vial_pixel_count": 22292
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12646491269355672,
+        "empty": 0.500635383818892,
+        "foam": 0.0,
+        "liquid": 0.3728997034875512
+      },
+      "class_pixel_counts": {
+        "blocked": 2687,
+        "empty": 10637,
+        "foam": 0,
+        "ignore": 285953,
+        "liquid": 7923
+      },
+      "frame_index": 34,
+      "level_ml": 59.46711763981584,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.350325077847579,
+        "mean_saturation": 0.05788290434833994,
+        "mean_value": 0.10243099637936709,
+        "pixel_count": 7923
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.4303435246885474,
+          0.8726832051421158,
+          0.07146447738658399
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00034-train-0104034.png",
+          "sha256": "88bc656423312ca8d45bcb89be3a594cceb0444bf8d0d220503f7e4a44e7044d"
+        },
+        "rgb": {
+          "path": "rgb/00034-train-0104034.png",
+          "sha256": "44cb52feebf0b0e44a5dc7d78f7ba7608e98a64f02e64c39b5425067ba2c1791"
+        }
+      },
+      "role": "train",
+      "seed": 104034,
+      "vial_bbox_xyxy": [
+        278,
+        67,
+        345,
+        443
+      ],
+      "vial_pixel_count": 21247
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.13249879634087627,
+        "empty": 0.4120365912373616,
+        "foam": 0.06759749638902263,
+        "liquid": 0.38786711603273955
+      },
+      "class_pixel_counts": {
+        "blocked": 2752,
+        "empty": 8558,
+        "foam": 1404,
+        "ignore": 286430,
+        "liquid": 8056
+      },
+      "frame_index": 35,
+      "level_ml": 69.25632676804047,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.09179271360640531,
+        "mean_saturation": 0.16091157992006877,
+        "mean_value": 0.12124783379091457,
+        "pixel_count": 8056
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.07569655503793615,
+          0.686352142903558,
+          0.21292111686433526
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00035-train-0104035.png",
+          "sha256": "8aad0a8e13808c47158d139309c5814364a79332af8aa1390fcaf0c4fb2d58ae"
+        },
+        "rgb": {
+          "path": "rgb/00035-train-0104035.png",
+          "sha256": "0fe7a9d7d84ffadcdc0633852126a4be1d28e5eab10176acdd2f17e0945860c1"
+        }
+      },
+      "role": "train",
+      "seed": 104035,
+      "vial_bbox_xyxy": [
+        274,
+        66,
+        340,
+        438
+      ],
+      "vial_pixel_count": 20770
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.20263510495757034,
+        "empty": 0.5589548905761501,
+        "foam": 0.0,
+        "liquid": 0.23841000446627958
+      },
+      "class_pixel_counts": {
+        "blocked": 4537,
+        "empty": 12515,
+        "foam": 0,
+        "ignore": 284810,
+        "liquid": 5338
+      },
+      "frame_index": 36,
+      "level_ml": 33.4781273263372,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.1990061921928257,
+        "mean_saturation": 0.10337214303062552,
+        "mean_value": 0.13028012253983648,
+        "pixel_count": 5338
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.21308683895515546,
+          0.31196636953921153,
+          0.23613186736403421
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00036-train-0104036.png",
+          "sha256": "f9caadf7d312bad4c966bf96633ac270621488c0fc9d18624160cef330608a67"
+        },
+        "rgb": {
+          "path": "rgb/00036-train-0104036.png",
+          "sha256": "6ae8107b5206e010bb418343812c24a3a65394ade01516a94eaa98e367ae6d45"
+        }
+      },
+      "role": "train",
+      "seed": 104036,
+      "vial_bbox_xyxy": [
+        276,
+        58,
+        344,
+        444
+      ],
+      "vial_pixel_count": 22390
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.18896729855633965,
+        "empty": 0.4633088879664222,
+        "foam": 0.08011623080116231,
+        "liquid": 0.2676075826760758
+      },
+      "class_pixel_counts": {
+        "blocked": 4097,
+        "empty": 10045,
+        "foam": 1737,
+        "ignore": 285519,
+        "liquid": 5802
+      },
+      "frame_index": 37,
+      "level_ml": 44.50239497317209,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.3529127303690345,
+        "mean_saturation": 0.0411088309783977,
+        "mean_value": 0.09955660995870257,
+        "pixel_count": 5802
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.554838630435141,
+          0.7578588420800643,
+          0.05666951286600565
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00037-train-0104037.png",
+          "sha256": "a2b3fde27e2d921d9e90233a6a5a8eded02615a2c6d8ef559579b06479fe9fe4"
+        },
+        "rgb": {
+          "path": "rgb/00037-train-0104037.png",
+          "sha256": "0f9da4108dcff0563cc2eae9307952a8f2c20ab9e51dcfcebbd5a9aec3abc7df"
+        }
+      },
+      "role": "train",
+      "seed": 104037,
+      "vial_bbox_xyxy": [
+        276,
+        65,
+        343,
+        445
+      ],
+      "vial_pixel_count": 21681
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.13097742922723796,
+        "empty": 0.3948928844682479,
+        "foam": 0.08727046671767406,
+        "liquid": 0.3868592195868401
+      },
+      "class_pixel_counts": {
+        "blocked": 2739,
+        "empty": 8258,
+        "foam": 1825,
+        "ignore": 286288,
+        "liquid": 8090
+      },
+      "frame_index": 38,
+      "level_ml": 68.88237845601154,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.3164320851981408,
+        "mean_saturation": 0.13357434320304665,
+        "mean_value": 0.12534962068881944,
+        "pixel_count": 8090
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.3388464325496014,
+          0.5211345331747528,
+          0.2347297352151903
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00038-train-0104038.png",
+          "sha256": "e3823cd06db50680799ee16485602be7fbca89e0a512bd16197cd661f1c59d01"
+        },
+        "rgb": {
+          "path": "rgb/00038-train-0104038.png",
+          "sha256": "769184c7dd769c0422e7511f7b4ad6c4d186f75441218942d799dd996ddfc395"
+        }
+      },
+      "role": "train",
+      "seed": 104038,
+      "vial_bbox_xyxy": [
+        279,
+        64,
+        345,
+        437
+      ],
+      "vial_pixel_count": 20912
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.20765206017004578,
+        "empty": 0.4285247126973746,
+        "foam": 0.0,
+        "liquid": 0.36382322713257964
+      },
+      "class_pixel_counts": {
+        "blocked": 4445,
+        "empty": 9173,
+        "foam": 0,
+        "ignore": 285794,
+        "liquid": 7788
+      },
+      "frame_index": 39,
+      "level_ml": 68.85476208460935,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.15503024553372707,
+        "mean_saturation": 0.04201253457562458,
+        "mean_value": 0.1340307360746045,
+        "pixel_count": 7788
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.15850966375735742,
+          0.19207903964943365,
+          0.21785807720099243
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00039-train-0104039.png",
+          "sha256": "35763f1009a8e2dfe67d5619c4cc0e7668baa42d6c7e496e45c37863a3dc4f12"
+        },
+        "rgb": {
+          "path": "rgb/00039-train-0104039.png",
+          "sha256": "cd938f85bceafd4c597dc187c5f3251861e82f5700a60622ea2b88855852526b"
+        }
+      },
+      "role": "train",
+      "seed": 104039,
+      "vial_bbox_xyxy": [
+        276,
+        63,
+        343,
+        441
+      ],
+      "vial_pixel_count": 21406
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.21319705124146351,
+        "empty": 0.6628827280539098,
+        "foam": 0.05879426529781557,
+        "liquid": 0.06512595540681108
+      },
+      "class_pixel_counts": {
+        "blocked": 4714,
+        "empty": 14657,
+        "foam": 1300,
+        "ignore": 285089,
+        "liquid": 1440
+      },
+      "frame_index": 40,
+      "level_ml": 12.759682135909165,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.21127049328430023,
+        "mean_saturation": 0.020833476706093493,
+        "mean_value": 0.13601034858387798,
+        "pixel_count": 1440
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.7747021927408485,
+          0.18011413527332265,
+          0.037340158420275646
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00040-train-0104040.png",
+          "sha256": "2237918d5d323b500435b5c201397dd10ad9219451134881d1469b02a7817f07"
+        },
+        "rgb": {
+          "path": "rgb/00040-train-0104040.png",
+          "sha256": "fd3420961ec29a56277be36d99204d33822e6fa6aeaa9ffdbfdd0c144247f058"
+        }
+      },
+      "role": "train",
+      "seed": 104040,
+      "vial_bbox_xyxy": [
+        274,
+        64,
+        342,
+        447
+      ],
+      "vial_pixel_count": 22111
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2667738427348811,
+        "empty": 0.3063028984821977,
+        "foam": 0.0,
+        "liquid": 0.4269232587829212
+      },
+      "class_pixel_counts": {
+        "blocked": 5642,
+        "empty": 6478,
+        "foam": 0,
+        "ignore": 286051,
+        "liquid": 9029
+      },
+      "frame_index": 41,
+      "level_ml": 83.39323272265962,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.28539046080531955,
+        "mean_saturation": 0.18589394920120944,
+        "mean_value": 0.17663433077295598,
+        "pixel_count": 9029
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.2987294140259191,
+          0.9009370740105778,
+          0.24593359561036532
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00041-train-0104041.png",
+          "sha256": "5c7ea59e069fe46b2524dcd40f60ed46bf1476f4eb71581f3bcba448cd29e6d7"
+        },
+        "rgb": {
+          "path": "rgb/00041-train-0104041.png",
+          "sha256": "238632fee0c4b36c75e54c10530bc5f5978adf17bbdfdf15b32f864d6aa807d0"
+        }
+      },
+      "role": "train",
+      "seed": 104041,
+      "vial_bbox_xyxy": [
+        278,
+        63,
+        344,
+        439
+      ],
+      "vial_pixel_count": 21149
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12909189286680495,
+        "empty": 0.5170890071241772,
+        "foam": 0.0,
+        "liquid": 0.35381910000901795
+      },
+      "class_pixel_counts": {
+        "blocked": 2863,
+        "empty": 11468,
+        "foam": 0,
+        "ignore": 285022,
+        "liquid": 7847
+      },
+      "frame_index": 42,
+      "level_ml": 48.45421732836411,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.27641230005914863,
+        "mean_saturation": 0.11436983980109475,
+        "mean_value": 0.12997198879551822,
+        "pixel_count": 7847
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.30934594594662695,
+          0.39962582304296174,
+          0.22089714697736454
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00042-train-0104042.png",
+          "sha256": "0d8eb78ad59ebfce40b84884410630c5064c11d27af468fd697e8ba7cd685a55"
+        },
+        "rgb": {
+          "path": "rgb/00042-train-0104042.png",
+          "sha256": "23219598e4b239d0986d18efc9c9703e80ee8360836a4b2b4736e39fb60bef78"
+        }
+      },
+      "role": "train",
+      "seed": 104042,
+      "vial_bbox_xyxy": [
+        274,
+        60,
+        342,
+        444
+      ],
+      "vial_pixel_count": 22178
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.20931906521426172,
+        "empty": 0.42857142857142855,
+        "foam": 0.0,
+        "liquid": 0.3621095062143097
+      },
+      "class_pixel_counts": {
+        "blocked": 4362,
+        "empty": 8931,
+        "foam": 0,
+        "ignore": 286361,
+        "liquid": 7546
+      },
+      "frame_index": 43,
+      "level_ml": 67.51736570980391,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.1063427734369396,
+        "mean_saturation": 0.037514400362516624,
+        "mean_value": 0.10795123244102836,
+        "pixel_count": 7546
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.8249424619388416,
+          0.3201865533483942,
+          0.07449036354136573
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00043-train-0104043.png",
+          "sha256": "94015711a721dbf5339f07ee074ed1b568a61cb7b10bd4303d539e00b7c19422"
+        },
+        "rgb": {
+          "path": "rgb/00043-train-0104043.png",
+          "sha256": "79094b7e98097c813f6f8657ed363bba1513f6e1a186b8296ec247368157e37b"
+        }
+      },
+      "role": "train",
+      "seed": 104043,
+      "vial_bbox_xyxy": [
+        274,
+        65,
+        340,
+        438
+      ],
+      "vial_pixel_count": 20839
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12618659507143543,
+        "empty": 0.4699875347588455,
+        "foam": 0.0,
+        "liquid": 0.40382587016971905
+      },
+      "class_pixel_counts": {
+        "blocked": 2632,
+        "empty": 9803,
+        "foam": 0,
+        "ignore": 286342,
+        "liquid": 8423
+      },
+      "frame_index": 44,
+      "level_ml": 63.609881617835384,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.5264718820003068,
+        "mean_saturation": 0.2788027639451507,
+        "mean_value": 0.14914531406769047,
+        "pixel_count": 8423
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.5354953047893694,
+          0.8670017640438699,
+          0.3433935520522181
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00044-train-0104044.png",
+          "sha256": "af351304dac9cea422401ab78b6921b7b3bb35a2d4fcbc31ceddbf5b80a26967"
+        },
+        "rgb": {
+          "path": "rgb/00044-train-0104044.png",
+          "sha256": "894897c7b7c67fa16ceb115e9388fde9ddde2a81882807493b85cf702e0f1139"
+        }
+      },
+      "role": "train",
+      "seed": 104044,
+      "vial_bbox_xyxy": [
+        275,
+        67,
+        341,
+        440
+      ],
+      "vial_pixel_count": 20858
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.1906389442703883,
+        "empty": 0.5212664957751828,
+        "foam": 0.0,
+        "liquid": 0.28809455995442895
+      },
+      "class_pixel_counts": {
+        "blocked": 4016,
+        "empty": 10981,
+        "foam": 0,
+        "ignore": 286134,
+        "liquid": 6069
+      },
+      "frame_index": 45,
+      "level_ml": 41.44640291160893,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.13401307736366375,
+        "mean_saturation": 0.1407572332616605,
+        "mean_value": 0.1568614527702661,
+        "pixel_count": 6069
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.1418647177765618,
+          0.6583050097799581,
+          0.23208475646930604
+        ],
+        "hue_family": "olive",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00045-train-0104045.png",
+          "sha256": "c3e29b5379b2d61a0fb8513ff250ced66fa0d6a661f7e6af967f5075ef3db36e"
+        },
+        "rgb": {
+          "path": "rgb/00045-train-0104045.png",
+          "sha256": "e62bd06098252094d7b2230744b6c4e332633257fe4b93c3fef2c8ec71c837a8"
+        }
+      },
+      "role": "train",
+      "seed": 104045,
+      "vial_bbox_xyxy": [
+        275,
+        66,
+        342,
+        440
+      ],
+      "vial_pixel_count": 21066
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.2022543117106514,
+        "empty": 0.42913403648544657,
+        "foam": 0.0,
+        "liquid": 0.36861165180390204
+      },
+      "class_pixel_counts": {
+        "blocked": 4468,
+        "empty": 9480,
+        "foam": 0,
+        "ignore": 285109,
+        "liquid": 8143
+      },
+      "frame_index": 46,
+      "level_ml": 68.85052422911119,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.3650468296636857,
+        "mean_saturation": 0.0500686184963022,
+        "mean_value": 0.13070482767588187,
+        "pixel_count": 8143
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.56102683421293,
+          0.4578031056472443,
+          0.09700839707912015
+        ],
+        "hue_family": "blue",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00046-train-0104046.png",
+          "sha256": "285a0b96d85a507848430805ab69ed3efc989d02de4253d5f3432c5cec9b616e"
+        },
+        "rgb": {
+          "path": "rgb/00046-train-0104046.png",
+          "sha256": "a5173c990f91190d966232dc45b377f25352e97b7933bdeb74c45fdc0cdad32e"
+        }
+      },
+      "role": "train",
+      "seed": 104046,
+      "vial_bbox_xyxy": [
+        274,
+        63,
+        341,
+        447
+      ],
+      "vial_pixel_count": 22091
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.13282102367060386,
+        "empty": 0.39680280821592906,
+        "foam": 0.08652340970542194,
+        "liquid": 0.38385275840804517
+      },
+      "class_pixel_counts": {
+        "blocked": 2800,
+        "empty": 8365,
+        "foam": 1824,
+        "ignore": 286119,
+        "liquid": 8092
+      },
+      "frame_index": 47,
+      "level_ml": 68.81087370665499,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.1667943326183075,
+        "mean_saturation": 0.17467434368947357,
+        "mean_value": 0.11886297771703837,
+        "pixel_count": 8092
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.17012387769968162,
+          0.690195557005386,
+          0.25055149473907007
+        ],
+        "hue_family": "olive",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00047-train-0104047.png",
+          "sha256": "22eb113c66778f8e708edd3d626e76ef5fb026130000343abbb18cbbb6d059f5"
+        },
+        "rgb": {
+          "path": "rgb/00047-train-0104047.png",
+          "sha256": "5a9edf00580ad01e4246d6ab0c896f4cf067e57030b42eda03fca1fabfdee093"
+        }
+      },
+      "role": "train",
+      "seed": 104047,
+      "vial_bbox_xyxy": [
+        275,
+        68,
+        341,
+        443
+      ],
+      "vial_pixel_count": 21081
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12802501586150639,
+        "empty": 0.33649052841475574,
+        "foam": 0.0,
+        "liquid": 0.5354844557237379
+      },
+      "class_pixel_counts": {
+        "blocked": 2825,
+        "empty": 7425,
+        "foam": 0,
+        "ignore": 285134,
+        "liquid": 11816
+      },
+      "frame_index": 48,
+      "level_ml": 80.272384711471,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.07274896091694255,
+        "mean_saturation": 0.03112594473396315,
+        "mean_value": 0.13175952845593214,
+        "pixel_count": 11816
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.9196206476970454,
+          0.06458397517921856,
+          0.23135952644148555
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00048-train-0104048.png",
+          "sha256": "1a7ec73085424a3771fcd87002b9ba3b420ed3e5356bda9fde6831def542b295"
+        },
+        "rgb": {
+          "path": "rgb/00048-train-0104048.png",
+          "sha256": "2628098981b80edd0cc26955206b76d52770532c8bae82d73d2d1f803ca08336"
+        }
+      },
+      "role": "train",
+      "seed": 104048,
+      "vial_bbox_xyxy": [
+        275,
+        59,
+        343,
+        443
+      ],
+      "vial_pixel_count": 22066
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12240914583139698,
+        "empty": 0.4696533135049726,
+        "foam": 0.046426247792545776,
+        "liquid": 0.3615112928710847
+      },
+      "class_pixel_counts": {
+        "blocked": 2634,
+        "empty": 10106,
+        "foam": 999,
+        "ignore": 285682,
+        "liquid": 7779
+      },
+      "frame_index": 49,
+      "level_ml": 64.17250154346573,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.17000243103063428,
+        "mean_saturation": 0.027527464461415175,
+        "mean_value": 0.11278731829536032,
+        "pixel_count": 7779
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.08545647448230467,
+          0.4342755046090073,
+          0.03809154673023197
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00049-train-0104049.png",
+          "sha256": "f7b9ac528724693c77136a3b3492a315ce07f013fbdfa2190b9d0a66b7398eb6"
+        },
+        "rgb": {
+          "path": "rgb/00049-train-0104049.png",
+          "sha256": "fd6a8bcc5e3f1fdd0b4ca78acc7c5a31d92703cb5b24c6493511da9637358911"
+        }
+      },
+      "role": "train",
+      "seed": 104049,
+      "vial_bbox_xyxy": [
+        274,
+        61,
+        341,
+        440
+      ],
+      "vial_pixel_count": 21518
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.19069975408003578,
+        "empty": 0.4751173708920188,
+        "foam": 0.0,
+        "liquid": 0.33418287502794547
+      },
+      "class_pixel_counts": {
+        "blocked": 4265,
+        "empty": 10626,
+        "foam": 0,
+        "ignore": 284835,
+        "liquid": 7474
+      },
+      "frame_index": 50,
+      "level_ml": 59.62999049755358,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.06669578713858505,
+        "mean_saturation": 0.2133398861918275,
+        "mean_value": 0.15552844632634966,
+        "pixel_count": 7474
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.0488681014343511,
+          0.5961483081504764,
+          0.3336512318323889
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00050-train-0104050.png",
+          "sha256": "8460b354242f0193bdf719a31f5b448c4bd90cb2ee94d9ec22710997fd075ae8"
+        },
+        "rgb": {
+          "path": "rgb/00050-train-0104050.png",
+          "sha256": "d21ba89791bc92a78542ffffd347abe23e8757e67fe3cb0582c1fdf8766b35f1"
+        }
+      },
+      "role": "train",
+      "seed": 104050,
+      "vial_bbox_xyxy": [
+        275,
+        61,
+        343,
+        447
+      ],
+      "vial_pixel_count": 22365
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12741534340922134,
+        "empty": 0.3884637459345705,
+        "foam": 0.08934379185000957,
+        "liquid": 0.3947771188061986
+      },
+      "class_pixel_counts": {
+        "blocked": 2664,
+        "empty": 8122,
+        "foam": 1868,
+        "ignore": 286292,
+        "liquid": 8254
+      },
+      "frame_index": 51,
+      "level_ml": 69.80346504113268,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.10806020072430274,
+        "mean_saturation": 0.14608975005066632,
+        "mean_value": 0.1318239047496876,
+        "pixel_count": 8254
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.09317250543995305,
+          0.5966772613023317,
+          0.2490883548066672
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00051-train-0104051.png",
+          "sha256": "f456fc4ba41852b843b82913b808973f442adb6d0563aacf7873d7622aec062b"
+        },
+        "rgb": {
+          "path": "rgb/00051-train-0104051.png",
+          "sha256": "59b830c2ddb3462d4b443a487f787e42265ff1d4ee252eea5b7d9087de103478"
+        }
+      },
+      "role": "train",
+      "seed": 104051,
+      "vial_bbox_xyxy": [
+        274,
+        68,
+        340,
+        441
+      ],
+      "vial_pixel_count": 20908
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.20386450381679388,
+        "empty": 0.5053912213740458,
+        "foam": 0.04432251908396947,
+        "liquid": 0.24642175572519084
+      },
+      "class_pixel_counts": {
+        "blocked": 4273,
+        "empty": 10593,
+        "foam": 929,
+        "ignore": 286240,
+        "liquid": 5165
+      },
+      "frame_index": 52,
+      "level_ml": 41.60797864949958,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.26818146780091384,
+        "mean_saturation": 0.05915663250930074,
+        "mean_value": 0.10841144202114535,
+        "pixel_count": 5165
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.4102548313836363,
+          0.9359278969652307,
+          0.03369234120889006
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00052-train-0104052.png",
+          "sha256": "42dc6b299cea3b082a3b14d7d60bc44cbd005b59e02e2a0a4f0623d419f249c6"
+        },
+        "rgb": {
+          "path": "rgb/00052-train-0104052.png",
+          "sha256": "4d42daae6dd68beb5794c8bf45990a942b4ef118a8f75752f6d555772cc900dd"
+        }
+      },
+      "role": "train",
+      "seed": 104052,
+      "vial_bbox_xyxy": [
+        275,
+        68,
+        341,
+        442
+      ],
+      "vial_pixel_count": 20960
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.22405715080948183,
+        "empty": 0.478174142969801,
+        "foam": 0.03822424270538572,
+        "liquid": 0.25954446351533145
+      },
+      "class_pixel_counts": {
+        "blocked": 4830,
+        "empty": 10308,
+        "foam": 824,
+        "ignore": 285643,
+        "liquid": 5595
+      },
+      "frame_index": 53,
+      "level_ml": 43.44258525397361,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.40865507808861107,
+        "mean_saturation": 0.13625588842464476,
+        "mean_value": 0.1287157651264259,
+        "pixel_count": 5595
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.43938701628124266,
+          0.6527985680798586,
+          0.21597051245606128
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00053-train-0104053.png",
+          "sha256": "019f5f38fb6c7df51db3095d51aa75dfba79b1577ec80aacf71a06e6e2770a0d"
+        },
+        "rgb": {
+          "path": "rgb/00053-train-0104053.png",
+          "sha256": "a5252b5bc8ff48044ebf0f9906870da48533f1b0b7ed05aa3f38d901efe17b7b"
+        }
+      },
+      "role": "train",
+      "seed": 104053,
+      "vial_bbox_xyxy": [
+        278,
+        62,
+        345,
+        441
+      ],
+      "vial_pixel_count": 21557
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12705997945603145,
+        "empty": 0.5064981465767496,
+        "foam": 0.0,
+        "liquid": 0.36644187396721895
+      },
+      "class_pixel_counts": {
+        "blocked": 2845,
+        "empty": 11341,
+        "foam": 0,
+        "ignore": 284809,
+        "liquid": 8205
+      },
+      "frame_index": 54,
+      "level_ml": 58.281427475603365,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.9017095354501141,
+        "mean_saturation": 0.061220011009581514,
+        "mean_value": 0.13224217657812667,
+        "pixel_count": 8205
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.8375092970914765,
+          0.3119830165663799,
+          0.2854000134652873
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00054-train-0104054.png",
+          "sha256": "c24590bb1727e519d59774f6a5ca7615e3a1a08e66d3d274977a75f6f5da91bb"
+        },
+        "rgb": {
+          "path": "rgb/00054-train-0104054.png",
+          "sha256": "0e40621c089188a51b718db4a6f705af9ef86ec51028a41429b8197ed8a19847"
+        }
+      },
+      "role": "train",
+      "seed": 104054,
+      "vial_bbox_xyxy": [
+        273,
+        58,
+        342,
+        444
+      ],
+      "vial_pixel_count": 22391
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12764252970759712,
+        "empty": 0.45965552539053806,
+        "foam": 0.0,
+        "liquid": 0.4127019449018648
+      },
+      "class_pixel_counts": {
+        "blocked": 2868,
+        "empty": 10328,
+        "foam": 0,
+        "ignore": 284731,
+        "liquid": 9273
+      },
+      "frame_index": 55,
+      "level_ml": 64.73539606901696,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.21728673704808243,
+        "mean_saturation": 0.039494533216827735,
+        "mean_value": 0.11902402716721325,
+        "pixel_count": 9273
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.29297115839864596,
+          0.557383796404342,
+          0.034352494140054396
+        ],
+        "hue_family": "dark_green",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00055-train-0104055.png",
+          "sha256": "43743a39dfc10fe6a5014608619154c183e05f5ff937514999850b6ae66a9446"
+        },
+        "rgb": {
+          "path": "rgb/00055-train-0104055.png",
+          "sha256": "172a4ffc4486d7bea4ce00916d121207171756f971815eaf67a105143aa4b782"
+        }
+      },
+      "role": "train",
+      "seed": 104055,
+      "vial_bbox_xyxy": [
+        277,
+        59,
+        346,
+        446
+      ],
+      "vial_pixel_count": 22469
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12424840501216322,
+        "empty": 0.5160416762289438,
+        "foam": 0.04465965942993528,
+        "liquid": 0.31505025932895764
+      },
+      "class_pixel_counts": {
+        "blocked": 2707,
+        "empty": 11243,
+        "foam": 973,
+        "ignore": 285413,
+        "liquid": 6864
+      },
+      "frame_index": 56,
+      "level_ml": 51.327969700041706,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.14730303976907655,
+        "mean_saturation": 0.08996225817707226,
+        "mean_value": 0.13290883952648658,
+        "pixel_count": 6864
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.14454391623491974,
+          0.32758684451099146,
+          0.2660839472108053
+        ],
+        "hue_family": "olive",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00056-train-0104056.png",
+          "sha256": "c8c51b05113b3e27c151db406294135b6bff71ce764e552a83d55b1d9f7bff5d"
+        },
+        "rgb": {
+          "path": "rgb/00056-train-0104056.png",
+          "sha256": "570ce3ff3c24741064a86cbb2ff025cbedf057f396a3a8e6b4266c6d2118b386"
+        }
+      },
+      "role": "train",
+      "seed": 104056,
+      "vial_bbox_xyxy": [
+        275,
+        60,
+        342,
+        441
+      ],
+      "vial_pixel_count": 21787
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.21742024437788238,
+        "empty": 0.4952217943232064,
+        "foam": 0.0,
+        "liquid": 0.2873579612989112
+      },
+      "class_pixel_counts": {
+        "blocked": 4573,
+        "empty": 10416,
+        "foam": 0,
+        "ignore": 286167,
+        "liquid": 6044
+      },
+      "frame_index": 57,
+      "level_ml": 59.341381718714175,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.15152448781158406,
+        "mean_saturation": 0.052134610914188306,
+        "mean_value": 0.13844357067777474,
+        "pixel_count": 6044
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.10216268784912519,
+          0.09055406585104568,
+          0.3208227066478412
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00057-train-0104057.png",
+          "sha256": "ad7e79a0b39f1e6c634b4c410301623cbc54b18fdaea02b32f211900adfdad0f"
+        },
+        "rgb": {
+          "path": "rgb/00057-train-0104057.png",
+          "sha256": "1db8a76ff95a1567520701ef1cb09776bb234ca09ca92b91fee2204196545749"
+        }
+      },
+      "role": "train",
+      "seed": 104057,
+      "vial_bbox_xyxy": [
+        276,
+        68,
+        342,
+        443
+      ],
+      "vial_pixel_count": 21033
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12947486033519554,
+        "empty": 0.7962011173184358,
+        "foam": 0.0,
+        "liquid": 0.07432402234636871
+      },
+      "class_pixel_counts": {
+        "blocked": 2897,
+        "empty": 17815,
+        "foam": 0,
+        "ignore": 284825,
+        "liquid": 1663
+      },
+      "frame_index": 58,
+      "level_ml": 3.673100695607217,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.13891160560678886,
+        "mean_saturation": 0.0945921095961169,
+        "mean_value": 0.25681440345230094,
+        "pixel_count": 1663
+      },
+      "material": {
+        "darkness_band": "very_dark",
+        "hsv": [
+          0.03656212290037284,
+          0.3466386893807805,
+          0.03349884287521605
+        ],
+        "hue_family": "brown",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00058-train-0104058.png",
+          "sha256": "157c05bf1d9d439a4088e142a617b21d1b98f745aad05444287406efc2c3f149"
+        },
+        "rgb": {
+          "path": "rgb/00058-train-0104058.png",
+          "sha256": "00d0288f1c8a8fe770202568924cc2e39369277b737824aa9483504d725b346c"
+        }
+      },
+      "role": "train",
+      "seed": 104058,
+      "vial_bbox_xyxy": [
+        274,
+        58,
+        342,
+        444
+      ],
+      "vial_pixel_count": 22375
+    },
+    {
+      "class_fractions_of_vial": {
+        "blocked": 0.12735205890373602,
+        "empty": 0.4194164166893919,
+        "foam": 0.0,
+        "liquid": 0.4532315244068721
+      },
+      "class_pixel_counts": {
+        "blocked": 2802,
+        "empty": 9228,
+        "foam": 0,
+        "ignore": 285198,
+        "liquid": 9972
+      },
+      "frame_index": 59,
+      "level_ml": 69.7689812956659,
+      "liquid_hsv": {
+        "mean_hue_circular_saturation_weighted_0_to_1": 0.7349473661270562,
+        "mean_saturation": 0.0896184440754606,
+        "mean_value": 0.1579257214317737,
+        "pixel_count": 9972
+      },
+      "material": {
+        "darkness_band": "dark",
+        "hsv": [
+          0.7248847310901612,
+          0.3665276883146685,
+          0.29402833428392605
+        ],
+        "hue_family": "near_black",
+        "saturation_band": "not_authored_v4"
+      },
+      "outputs": {
+        "mask": {
+          "path": "mask/00059-train-0104059.png",
+          "sha256": "616d996abe29eb6678e31e6d6dc9f761c4180755e1373e19cb525d6ebf519fc5"
+        },
+        "rgb": {
+          "path": "rgb/00059-train-0104059.png",
+          "sha256": "715b65966d956e9db5a922e556750c81ee7dc77fc696411b88e0b82497ca41bb"
+        }
+      },
+      "role": "train",
+      "seed": 104059,
+      "vial_bbox_xyxy": [
+        278,
+        60,
+        345,
+        442
+      ],
+      "vial_pixel_count": 22002
+    }
+  ],
+  "independent_capture_checker": {
+    "checker_path": "scripts/check_fill_level_capture.py",
+    "checker_sha256": "a03442a7da4cde31dee084ffbe3375f0574b370a78829c01976d77f49246e966",
+    "passed": true,
+    "record_count": 60,
+    "report": {
+      "errors": [],
+      "passed": true,
+      "record_count": 60,
+      "records": [
+        {
+          "errors": [],
+          "index": 1,
+          "label_counts": {
+            "0": 8858,
+            "1": 8392,
+            "255": 285722,
+            "3": 4228
+          },
+          "role": "train",
+          "seed": 104000
+        },
+        {
+          "errors": [],
+          "index": 2,
+          "label_counts": {
+            "0": 11673,
+            "1": 3826,
+            "2": 1217,
+            "255": 285474,
+            "3": 5010
+          },
+          "role": "train",
+          "seed": 104001
+        },
+        {
+          "errors": [],
+          "index": 3,
+          "label_counts": {
+            "0": 8217,
+            "1": 5899,
+            "2": 1719,
+            "255": 285835,
+            "3": 5530
+          },
+          "role": "train",
+          "seed": 104002
+        },
+        {
+          "errors": [],
+          "index": 4,
+          "label_counts": {
+            "0": 9105,
+            "1": 5690,
+            "2": 1433,
+            "255": 284821,
+            "3": 6151
+          },
+          "role": "train",
+          "seed": 104003
+        },
+        {
+          "errors": [],
+          "index": 5,
+          "label_counts": {
+            "0": 8783,
+            "1": 8100,
+            "2": 1850,
+            "255": 285673,
+            "3": 2794
+          },
+          "role": "train",
+          "seed": 104004
+        },
+        {
+          "errors": [],
+          "index": 6,
+          "label_counts": {
+            "0": 11343,
+            "1": 5785,
+            "2": 79,
+            "255": 285177,
+            "3": 4816
+          },
+          "role": "train",
+          "seed": 104005
+        },
+        {
+          "errors": [],
+          "index": 7,
+          "label_counts": {
+            "0": 9450,
+            "1": 6962,
+            "255": 285780,
+            "3": 5008
+          },
+          "role": "train",
+          "seed": 104006
+        },
+        {
+          "errors": [],
+          "index": 8,
+          "label_counts": {
+            "0": 10859,
+            "1": 5040,
+            "255": 286336,
+            "3": 4965
+          },
+          "role": "train",
+          "seed": 104007
+        },
+        {
+          "errors": [],
+          "index": 9,
+          "label_counts": {
+            "0": 13789,
+            "1": 3076,
+            "255": 285801,
+            "3": 4534
+          },
+          "role": "train",
+          "seed": 104008
+        },
+        {
+          "errors": [],
+          "index": 10,
+          "label_counts": {
+            "0": 9864,
+            "1": 7575,
+            "2": 822,
+            "255": 286158,
+            "3": 2781
+          },
+          "role": "train",
+          "seed": 104009
+        },
+        {
+          "errors": [],
+          "index": 11,
+          "label_counts": {
+            "0": 14230,
+            "1": 1753,
+            "2": 1505,
+            "255": 285072,
+            "3": 4640
+          },
+          "role": "train",
+          "seed": 104010
+        },
+        {
+          "errors": [],
+          "index": 12,
+          "label_counts": {
+            "0": 12622,
+            "1": 3570,
+            "2": 1885,
+            "255": 286422,
+            "3": 2701
+          },
+          "role": "train",
+          "seed": 104011
+        },
+        {
+          "errors": [],
+          "index": 13,
+          "label_counts": {
+            "0": 9744,
+            "1": 4309,
+            "2": 1294,
+            "255": 285816,
+            "3": 6037
+          },
+          "role": "train",
+          "seed": 104012
+        },
+        {
+          "errors": [],
+          "index": 14,
+          "label_counts": {
+            "0": 9280,
+            "1": 7264,
+            "255": 286376,
+            "3": 4280
+          },
+          "role": "train",
+          "seed": 104013
+        },
+        {
+          "errors": [],
+          "index": 15,
+          "label_counts": {
+            "0": 8278,
+            "1": 7784,
+            "2": 282,
+            "255": 285666,
+            "3": 5190
+          },
+          "role": "train",
+          "seed": 104014
+        },
+        {
+          "errors": [],
+          "index": 16,
+          "label_counts": {
+            "0": 10460,
+            "1": 5488,
+            "2": 1864,
+            "255": 285235,
+            "3": 4153
+          },
+          "role": "train",
+          "seed": 104015
+        },
+        {
+          "errors": [],
+          "index": 17,
+          "label_counts": {
+            "0": 8914,
+            "1": 7538,
+            "255": 285997,
+            "3": 4751
+          },
+          "role": "train",
+          "seed": 104016
+        },
+        {
+          "errors": [],
+          "index": 18,
+          "label_counts": {
+            "0": 10733,
+            "1": 5064,
+            "2": 12,
+            "255": 286356,
+            "3": 5035
+          },
+          "role": "train",
+          "seed": 104017
+        },
+        {
+          "errors": [],
+          "index": 19,
+          "label_counts": {
+            "0": 14661,
+            "1": 2234,
+            "255": 285681,
+            "3": 4624
+          },
+          "role": "train",
+          "seed": 104018
+        },
+        {
+          "errors": [],
+          "index": 20,
+          "label_counts": {
+            "0": 8523,
+            "1": 7623,
+            "255": 285621,
+            "3": 5433
+          },
+          "role": "train",
+          "seed": 104019
+        },
+        {
+          "errors": [],
+          "index": 21,
+          "label_counts": {
+            "0": 10710,
+            "1": 5397,
+            "255": 286242,
+            "3": 4851
+          },
+          "role": "train",
+          "seed": 104020
+        },
+        {
+          "errors": [],
+          "index": 22,
+          "label_counts": {
+            "0": 9208,
+            "1": 5591,
+            "2": 1328,
+            "255": 286191,
+            "3": 4882
+          },
+          "role": "train",
+          "seed": 104021
+        },
+        {
+          "errors": [],
+          "index": 23,
+          "label_counts": {
+            "0": 11006,
+            "1": 5078,
+            "255": 285891,
+            "3": 5225
+          },
+          "role": "train",
+          "seed": 104022
+        },
+        {
+          "errors": [],
+          "index": 24,
+          "label_counts": {
+            "0": 8797,
+            "1": 8049,
+            "2": 1481,
+            "255": 286085,
+            "3": 2788
+          },
+          "role": "train",
+          "seed": 104023
+        },
+        {
+          "errors": [],
+          "index": 25,
+          "label_counts": {
+            "0": 14121,
+            "1": 4488,
+            "255": 285796,
+            "3": 2795
+          },
+          "role": "train",
+          "seed": 104024
+        },
+        {
+          "errors": [],
+          "index": 26,
+          "label_counts": {
+            "0": 10051,
+            "1": 7426,
+            "255": 285515,
+            "3": 4208
+          },
+          "role": "train",
+          "seed": 104025
+        },
+        {
+          "errors": [],
+          "index": 27,
+          "label_counts": {
+            "0": 9170,
+            "1": 8278,
+            "2": 1389,
+            "255": 285743,
+            "3": 2620
+          },
+          "role": "train",
+          "seed": 104026
+        },
+        {
+          "errors": [],
+          "index": 28,
+          "label_counts": {
+            "0": 7394,
+            "1": 8215,
+            "255": 285676,
+            "3": 5915
+          },
+          "role": "train",
+          "seed": 104027
+        },
+        {
+          "errors": [],
+          "index": 29,
+          "label_counts": {
+            "0": 8644,
+            "1": 9618,
+            "255": 286159,
+            "3": 2779
+          },
+          "role": "train",
+          "seed": 104028
+        },
+        {
+          "errors": [],
+          "index": 30,
+          "label_counts": {
+            "0": 8214,
+            "1": 8270,
+            "255": 284748,
+            "3": 5968
+          },
+          "role": "train",
+          "seed": 104029
+        },
+        {
+          "errors": [],
+          "index": 31,
+          "label_counts": {
+            "0": 9216,
+            "1": 7650,
+            "255": 286404,
+            "3": 3930
+          },
+          "role": "train",
+          "seed": 104030
+        },
+        {
+          "errors": [],
+          "index": 32,
+          "label_counts": {
+            "0": 12780,
+            "1": 3245,
+            "255": 284797,
+            "3": 6378
+          },
+          "role": "train",
+          "seed": 104031
+        },
+        {
+          "errors": [],
+          "index": 33,
+          "label_counts": {
+            "0": 14700,
+            "1": 4274,
+            "255": 285422,
+            "3": 2804
+          },
+          "role": "train",
+          "seed": 104032
+        },
+        {
+          "errors": [],
+          "index": 34,
+          "label_counts": {
+            "0": 12573,
+            "1": 5362,
+            "2": 1471,
+            "255": 284908,
+            "3": 2886
+          },
+          "role": "train",
+          "seed": 104033
+        },
+        {
+          "errors": [],
+          "index": 35,
+          "label_counts": {
+            "0": 10637,
+            "1": 7923,
+            "255": 285953,
+            "3": 2687
+          },
+          "role": "train",
+          "seed": 104034
+        },
+        {
+          "errors": [],
+          "index": 36,
+          "label_counts": {
+            "0": 8558,
+            "1": 8056,
+            "2": 1404,
+            "255": 286430,
+            "3": 2752
+          },
+          "role": "train",
+          "seed": 104035
+        },
+        {
+          "errors": [],
+          "index": 37,
+          "label_counts": {
+            "0": 12515,
+            "1": 5338,
+            "255": 284810,
+            "3": 4537
+          },
+          "role": "train",
+          "seed": 104036
+        },
+        {
+          "errors": [],
+          "index": 38,
+          "label_counts": {
+            "0": 10045,
+            "1": 5802,
+            "2": 1737,
+            "255": 285519,
+            "3": 4097
+          },
+          "role": "train",
+          "seed": 104037
+        },
+        {
+          "errors": [],
+          "index": 39,
+          "label_counts": {
+            "0": 8258,
+            "1": 8090,
+            "2": 1825,
+            "255": 286288,
+            "3": 2739
+          },
+          "role": "train",
+          "seed": 104038
+        },
+        {
+          "errors": [],
+          "index": 40,
+          "label_counts": {
+            "0": 9173,
+            "1": 7788,
+            "255": 285794,
+            "3": 4445
+          },
+          "role": "train",
+          "seed": 104039
+        },
+        {
+          "errors": [],
+          "index": 41,
+          "label_counts": {
+            "0": 14657,
+            "1": 1440,
+            "2": 1300,
+            "255": 285089,
+            "3": 4714
+          },
+          "role": "train",
+          "seed": 104040
+        },
+        {
+          "errors": [],
+          "index": 42,
+          "label_counts": {
+            "0": 6478,
+            "1": 9029,
+            "255": 286051,
+            "3": 5642
+          },
+          "role": "train",
+          "seed": 104041
+        },
+        {
+          "errors": [],
+          "index": 43,
+          "label_counts": {
+            "0": 11468,
+            "1": 7847,
+            "255": 285022,
+            "3": 2863
+          },
+          "role": "train",
+          "seed": 104042
+        },
+        {
+          "errors": [],
+          "index": 44,
+          "label_counts": {
+            "0": 8931,
+            "1": 7546,
+            "255": 286361,
+            "3": 4362
+          },
+          "role": "train",
+          "seed": 104043
+        },
+        {
+          "errors": [],
+          "index": 45,
+          "label_counts": {
+            "0": 9803,
+            "1": 8423,
+            "255": 286342,
+            "3": 2632
+          },
+          "role": "train",
+          "seed": 104044
+        },
+        {
+          "errors": [],
+          "index": 46,
+          "label_counts": {
+            "0": 10981,
+            "1": 6069,
+            "255": 286134,
+            "3": 4016
+          },
+          "role": "train",
+          "seed": 104045
+        },
+        {
+          "errors": [],
+          "index": 47,
+          "label_counts": {
+            "0": 9480,
+            "1": 8143,
+            "255": 285109,
+            "3": 4468
+          },
+          "role": "train",
+          "seed": 104046
+        },
+        {
+          "errors": [],
+          "index": 48,
+          "label_counts": {
+            "0": 8365,
+            "1": 8092,
+            "2": 1824,
+            "255": 286119,
+            "3": 2800
+          },
+          "role": "train",
+          "seed": 104047
+        },
+        {
+          "errors": [],
+          "index": 49,
+          "label_counts": {
+            "0": 7425,
+            "1": 11816,
+            "255": 285134,
+            "3": 2825
+          },
+          "role": "train",
+          "seed": 104048
+        },
+        {
+          "errors": [],
+          "index": 50,
+          "label_counts": {
+            "0": 10106,
+            "1": 7779,
+            "2": 999,
+            "255": 285682,
+            "3": 2634
+          },
+          "role": "train",
+          "seed": 104049
+        },
+        {
+          "errors": [],
+          "index": 51,
+          "label_counts": {
+            "0": 10626,
+            "1": 7474,
+            "255": 284835,
+            "3": 4265
+          },
+          "role": "train",
+          "seed": 104050
+        },
+        {
+          "errors": [],
+          "index": 52,
+          "label_counts": {
+            "0": 8122,
+            "1": 8254,
+            "2": 1868,
+            "255": 286292,
+            "3": 2664
+          },
+          "role": "train",
+          "seed": 104051
+        },
+        {
+          "errors": [],
+          "index": 53,
+          "label_counts": {
+            "0": 10593,
+            "1": 5165,
+            "2": 929,
+            "255": 286240,
+            "3": 4273
+          },
+          "role": "train",
+          "seed": 104052
+        },
+        {
+          "errors": [],
+          "index": 54,
+          "label_counts": {
+            "0": 10308,
+            "1": 5595,
+            "2": 824,
+            "255": 285643,
+            "3": 4830
+          },
+          "role": "train",
+          "seed": 104053
+        },
+        {
+          "errors": [],
+          "index": 55,
+          "label_counts": {
+            "0": 11341,
+            "1": 8205,
+            "255": 284809,
+            "3": 2845
+          },
+          "role": "train",
+          "seed": 104054
+        },
+        {
+          "errors": [],
+          "index": 56,
+          "label_counts": {
+            "0": 10328,
+            "1": 9273,
+            "255": 284731,
+            "3": 2868
+          },
+          "role": "train",
+          "seed": 104055
+        },
+        {
+          "errors": [],
+          "index": 57,
+          "label_counts": {
+            "0": 11243,
+            "1": 6864,
+            "2": 973,
+            "255": 285413,
+            "3": 2707
+          },
+          "role": "train",
+          "seed": 104056
+        },
+        {
+          "errors": [],
+          "index": 58,
+          "label_counts": {
+            "0": 10416,
+            "1": 6044,
+            "255": 286167,
+            "3": 4573
+          },
+          "role": "train",
+          "seed": 104057
+        },
+        {
+          "errors": [],
+          "index": 59,
+          "label_counts": {
+            "0": 17815,
+            "1": 1663,
+            "255": 284825,
+            "3": 2897
+          },
+          "role": "train",
+          "seed": 104058
+        },
+        {
+          "errors": [],
+          "index": 60,
+          "label_counts": {
+            "0": 9228,
+            "1": 9972,
+            "255": 285198,
+            "3": 2802
+          },
+          "role": "train",
+          "seed": 104059
+        }
+      ],
+      "schema_version": 1
+    },
+    "status": "passed"
+  },
+  "montage": {
+    "columns": 5,
+    "contains_real_frames": false,
+    "contains_test_frames": false,
+    "path": "step8-r2-v4-batch-first-train-chunk-synthetic-montage.png",
+    "rows": 4,
+    "selected_seeds": [
+      104058,
+      104018,
+      104001,
+      104000,
+      104025,
+      104037,
+      104004,
+      104034,
+      104043,
+      104052,
+      104016,
+      104014,
+      104013,
+      104049,
+      104009,
+      104029,
+      104028,
+      104022,
+      104019,
+      104047
+    ],
+    "selections": [
+      {
+        "empty_fraction_of_vial": 0.7962011173184358,
+        "empty_pixel_count": 17815,
+        "level_ml": 3.673100695607217,
+        "liquid_fraction_of_vial": 0.07432402234636871,
+        "liquid_pixel_count": 1663,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.03656212290037284,
+            0.3466386893807805,
+            0.03349884287521605
+          ],
+          "hue_family": "brown",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "lowest_positive_level_glass_focus",
+          "highest_visible_empty_fraction_glass_focus",
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.13891160560678886,
+          "mean_saturation": 0.0945921095961169,
+          "mean_value": 0.25681440345230094,
+          "pixel_count": 1663
+        },
+        "seed": 104058,
+        "vial_pixel_count": 22375
+      },
+      {
+        "empty_fraction_of_vial": 0.6813048933500627,
+        "empty_pixel_count": 14661,
+        "level_ml": 9.129810324504138,
+        "liquid_fraction_of_vial": 0.10381523304986291,
+        "liquid_pixel_count": 2234,
+        "material": {
+          "darkness_band": "dark",
+          "hsv": [
+            0.00236263865440457,
+            0.32494834387986954,
+            0.21204129085454881
+          ],
+          "hue_family": "brown",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "lowest_positive_level_glass_focus",
+          "highest_visible_empty_fraction_glass_focus",
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.07963229334899455,
+          "mean_saturation": 0.12529100552853517,
+          "mean_value": 0.184610388470518,
+          "pixel_count": 2234
+        },
+        "seed": 104018,
+        "vial_pixel_count": 21519
+      },
+      {
+        "empty_fraction_of_vial": 0.5372825186412593,
+        "empty_pixel_count": 11673,
+        "level_ml": 30.63422025503608,
+        "liquid_fraction_of_vial": 0.1761023658289607,
+        "liquid_pixel_count": 3826,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.5610768408091995,
+            0.5261829872956186,
+            0.09120489663134525
+          ],
+          "hue_family": "blue",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "material_darkness_very_dark",
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.26176217984416317,
+          "mean_saturation": 0.03414623778295826,
+          "mean_value": 0.10696165554564743,
+          "pixel_count": 3826
+        },
+        "seed": 104001,
+        "vial_pixel_count": 21726
+      },
+      {
+        "empty_fraction_of_vial": 0.4124220132228327,
+        "empty_pixel_count": 8858,
+        "level_ml": 70.0565702723033,
+        "liquid_fraction_of_vial": 0.39072539342583107,
+        "liquid_pixel_count": 8392,
+        "material": {
+          "darkness_band": "dark",
+          "hsv": [
+            0.8817638746797035,
+            0.2832393943875228,
+            0.20256536453765536
+          ],
+          "hue_family": "near_black",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "material_darkness_dark",
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.9685653618990142,
+          "mean_saturation": 0.05577203829380995,
+          "mean_value": 0.11338249313071273,
+          "pixel_count": 8392
+        },
+        "seed": 104000,
+        "vial_pixel_count": 21478
+      },
+      {
+        "empty_fraction_of_vial": 0.4635001152870648,
+        "empty_pixel_count": 10051,
+        "level_ml": 54.48202808500206,
+        "liquid_fraction_of_vial": 0.34244869725616783,
+        "liquid_pixel_count": 7426,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.059218856796247624,
+            0.8478853761754661,
+            0.05436627892359739
+          ],
+          "hue_family": "brown",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.12337965427923217,
+          "mean_saturation": 0.06749012394739393,
+          "mean_value": 0.0985282235706025,
+          "pixel_count": 7426
+        },
+        "seed": 104025,
+        "vial_pixel_count": 21685
+      },
+      {
+        "empty_fraction_of_vial": 0.4633088879664222,
+        "empty_pixel_count": 10045,
+        "level_ml": 44.50239497317209,
+        "liquid_fraction_of_vial": 0.2676075826760758,
+        "liquid_pixel_count": 5802,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.554838630435141,
+            0.7578588420800643,
+            0.05666951286600565
+          ],
+          "hue_family": "blue",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.3529127303690345,
+          "mean_saturation": 0.0411088309783977,
+          "mean_value": 0.09955660995870257,
+          "pixel_count": 5802
+        },
+        "seed": 104037,
+        "vial_pixel_count": 21681
+      },
+      {
+        "empty_fraction_of_vial": 0.40799925674734056,
+        "empty_pixel_count": 8783,
+        "level_ml": 67.597671556149,
+        "liquid_fraction_of_vial": 0.3762716588470293,
+        "liquid_pixel_count": 8100,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.28825173796746484,
+            0.14852760148516683,
+            0.03843773318962962
+          ],
+          "hue_family": "near_black",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.20967848363210762,
+          "mean_saturation": 0.026580091756684063,
+          "mean_value": 0.10179665940450254,
+          "pixel_count": 8100
+        },
+        "seed": 104004,
+        "vial_pixel_count": 21527
+      },
+      {
+        "empty_fraction_of_vial": 0.500635383818892,
+        "empty_pixel_count": 10637,
+        "level_ml": 59.46711763981584,
+        "liquid_fraction_of_vial": 0.3728997034875512,
+        "liquid_pixel_count": 7923,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.4303435246885474,
+            0.8726832051421158,
+            0.07146447738658399
+          ],
+          "hue_family": "dark_green",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.350325077847579,
+          "mean_saturation": 0.05788290434833994,
+          "mean_value": 0.10243099637936709,
+          "pixel_count": 7923
+        },
+        "seed": 104034,
+        "vial_pixel_count": 21247
+      },
+      {
+        "empty_fraction_of_vial": 0.42857142857142855,
+        "empty_pixel_count": 8931,
+        "level_ml": 67.51736570980391,
+        "liquid_fraction_of_vial": 0.3621095062143097,
+        "liquid_pixel_count": 7546,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.8249424619388416,
+            0.3201865533483942,
+            0.07449036354136573
+          ],
+          "hue_family": "near_black",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.1063427734369396,
+          "mean_saturation": 0.037514400362516624,
+          "mean_value": 0.10795123244102836,
+          "pixel_count": 7546
+        },
+        "seed": 104043,
+        "vial_pixel_count": 20839
+      },
+      {
+        "empty_fraction_of_vial": 0.5053912213740458,
+        "empty_pixel_count": 10593,
+        "level_ml": 41.60797864949958,
+        "liquid_fraction_of_vial": 0.24642175572519084,
+        "liquid_pixel_count": 5165,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.4102548313836363,
+            0.9359278969652307,
+            0.03369234120889006
+          ],
+          "hue_family": "dark_green",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.26818146780091384,
+          "mean_saturation": 0.05915663250930074,
+          "mean_value": 0.10841144202114535,
+          "pixel_count": 5165
+        },
+        "seed": 104052,
+        "vial_pixel_count": 20960
+      },
+      {
+        "empty_fraction_of_vial": 0.42041220581993116,
+        "empty_pixel_count": 8914,
+        "level_ml": 70.05345044920185,
+        "liquid_fraction_of_vial": 0.35551572890628685,
+        "liquid_pixel_count": 7538,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.2118947185952842,
+            0.3867159388984918,
+            0.053148282126051064
+          ],
+          "hue_family": "near_black",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.18921746588529453,
+          "mean_saturation": 0.043576337080707794,
+          "mean_value": 0.10930136979174797,
+          "pixel_count": 7538
+        },
+        "seed": 104016,
+        "vial_pixel_count": 21203
+      },
+      {
+        "empty_fraction_of_vial": 0.3844153431782298,
+        "empty_pixel_count": 8278,
+        "level_ml": 66.00614614824553,
+        "liquid_fraction_of_vial": 0.3614748769387945,
+        "liquid_pixel_count": 7784,
+        "material": {
+          "darkness_band": "dark",
+          "hsv": [
+            0.12046494500280874,
+            0.7126209060424293,
+            0.2421523504018833
+          ],
+          "hue_family": "olive",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.1327509318021963,
+          "mean_saturation": 0.18719092175598753,
+          "mean_value": 0.1111052334602906,
+          "pixel_count": 7784
+        },
+        "seed": 104014,
+        "vial_pixel_count": 21534
+      },
+      {
+        "empty_fraction_of_vial": 0.4456396465616596,
+        "empty_pixel_count": 9280,
+        "level_ml": 66.80705365757899,
+        "liquid_fraction_of_vial": 0.34882827506723013,
+        "liquid_pixel_count": 7264,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.04642459550110526,
+            0.5095987481621477,
+            0.032178796405289214
+          ],
+          "hue_family": "brown",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.12743155599883266,
+          "mean_saturation": 0.03857445456354463,
+          "mean_value": 0.11244115487604733,
+          "pixel_count": 7264
+        },
+        "seed": 104013,
+        "vial_pixel_count": 20824
+      },
+      {
+        "empty_fraction_of_vial": 0.4696533135049726,
+        "empty_pixel_count": 10106,
+        "level_ml": 64.17250154346573,
+        "liquid_fraction_of_vial": 0.3615112928710847,
+        "liquid_pixel_count": 7779,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.08545647448230467,
+            0.4342755046090073,
+            0.03809154673023197
+          ],
+          "hue_family": "brown",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.17000243103063428,
+          "mean_saturation": 0.027527464461415175,
+          "mean_value": 0.11278731829536032,
+          "pixel_count": 7779
+        },
+        "seed": 104049,
+        "vial_pixel_count": 21518
+      },
+      {
+        "empty_fraction_of_vial": 0.46877673224978617,
+        "empty_pixel_count": 9864,
+        "level_ml": 59.843455432419645,
+        "liquid_fraction_of_vial": 0.3599942971200456,
+        "liquid_pixel_count": 7575,
+        "material": {
+          "darkness_band": "dark",
+          "hsv": [
+            0.6089634485854234,
+            0.4452969635395003,
+            0.27416410939820623
+          ],
+          "hue_family": "near_black",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.581546566662881,
+          "mean_saturation": 0.10253123054060216,
+          "mean_value": 0.11598369248689576,
+          "pixel_count": 7575
+        },
+        "seed": 104009,
+        "vial_pixel_count": 21042
+      },
+      {
+        "empty_fraction_of_vial": 0.36584714056654194,
+        "empty_pixel_count": 8214,
+        "level_ml": 69.21827239213174,
+        "liquid_fraction_of_vial": 0.36834135043648675,
+        "liquid_pixel_count": 8270,
+        "material": {
+          "darkness_band": "dark",
+          "hsv": [
+            0.21370153617393417,
+            0.39384260539820304,
+            0.2981061421567425
+          ],
+          "hue_family": "olive",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.2102100743843067,
+          "mean_saturation": 0.132725671652754,
+          "mean_value": 0.11618038267302083,
+          "pixel_count": 8270
+        },
+        "seed": 104029,
+        "vial_pixel_count": 22452
+      },
+      {
+        "empty_fraction_of_vial": 0.41081697637944964,
+        "empty_pixel_count": 8644,
+        "level_ml": 70.4783854670011,
+        "liquid_fraction_of_vial": 0.4571075519224371,
+        "liquid_pixel_count": 9618,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.5980658850211664,
+            0.561614435444338,
+            0.03242357786244027
+          ],
+          "hue_family": "blue",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.4202826788048675,
+          "mean_saturation": 0.031811778777207436,
+          "mean_value": 0.11674393192502622,
+          "pixel_count": 9618
+        },
+        "seed": 104028,
+        "vial_pixel_count": 21041
+      },
+      {
+        "empty_fraction_of_vial": 0.5164953775400065,
+        "empty_pixel_count": 11006,
+        "level_ml": 44.24454701882808,
+        "liquid_fraction_of_vial": 0.23830306443286875,
+        "liquid_pixel_count": 5078,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.6441038632035069,
+            0.3121772725767411,
+            0.03781408458065367
+          ],
+          "hue_family": "blue",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.17736472552708094,
+          "mean_saturation": 0.047818784050535475,
+          "mean_value": 0.11797295523171854,
+          "pixel_count": 5078
+        },
+        "seed": 104022,
+        "vial_pixel_count": 21309
+      },
+      {
+        "empty_fraction_of_vial": 0.3949673293479772,
+        "empty_pixel_count": 8523,
+        "level_ml": 63.01586274675876,
+        "liquid_fraction_of_vial": 0.35326011399972196,
+        "liquid_pixel_count": 7623,
+        "material": {
+          "darkness_band": "very_dark",
+          "hsv": [
+            0.098939238749251,
+            0.8313528131619257,
+            0.04833311147916765
+          ],
+          "hue_family": "brown",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.12659548680623714,
+          "mean_saturation": 0.048981237202055675,
+          "mean_value": 0.11834669588680286,
+          "pixel_count": 7623
+        },
+        "seed": 104019,
+        "vial_pixel_count": 21579
+      },
+      {
+        "empty_fraction_of_vial": 0.39680280821592906,
+        "empty_pixel_count": 8365,
+        "level_ml": 68.81087370665499,
+        "liquid_fraction_of_vial": 0.38385275840804517,
+        "liquid_pixel_count": 8092,
+        "material": {
+          "darkness_band": "dark",
+          "hsv": [
+            0.17012387769968162,
+            0.690195557005386,
+            0.25055149473907007
+          ],
+          "hue_family": "olive",
+          "saturation_band": "not_authored_v4"
+        },
+        "reasons": [
+          "darkest_rendered_liquid",
+          "highest_rendered_saturation",
+          "deterministic_seed_fill"
+        ],
+        "rendered_liquid_hsv": {
+          "mean_hue_circular_saturation_weighted_0_to_1": 0.1667943326183075,
+          "mean_saturation": 0.17467434368947357,
+          "mean_value": 0.11886297771703837,
+          "pixel_count": 8092
+        },
+        "seed": 104047,
+        "vial_pixel_count": 21081
+      }
+    ],
+    "sha256": "cf03da3ea39dbefd11c781e1eca9772064d10b390547cfce54833712929aa2c9",
+    "synthetic_only": true
+  },
+  "positive_level_zero_liquid_frames": [],
+  "provenance": {
+    "active_vial_prim": "/FillStation/FillStation_LocalRoot/Fill_vial_active",
+    "camera_match_sha256": "aeee0c5ef7e5b8b88678356f30de4d14a3126da70e4eb5c84711c674bfafc2f8",
+    "expected_external_hashes": {
+      "renderer_script_sha256": "8e23ece14ed5c58599981c59589d4c9f0484703fc629ad760333e0d6f09025cd",
+      "specs_sha256": "e12fbdeea2bb966499e2f8ae23b9af27bf790e1b055734951fc4ec4ca4573f93",
+      "variation_module_sha256": "71aea9f84e7b6c84e7ed807d3784891715e3ddbeac5dea8f17ed291d9f52a182"
+    },
+    "glass_contract": {
+      "f0_gate": "not_applicable",
+      "mode": "stage_v4_unchanged",
+      "reason": "the exact archived pilot-v4 renderer leaves the source-stage glass unchanged and does not author the newer explicit glass/F0 contract",
+      "renderer_authored_override": false
+    },
+    "integrity_passed": true,
+    "manifest_sha256": "48360578e48b5b85fb20769387c3a034565cb65ee3090e8626deee5038531b89",
+    "real_look_requested": true,
+    "renderer_script_sha256": "8e23ece14ed5c58599981c59589d4c9f0484703fc629ad760333e0d6f09025cd",
+    "session_layer_sha256": "bca0e3ac93dc1dc9f57e2765e208e8dfefdb5028738e1aecb6f806aeea8c7d53",
+    "source_camera_json_sha256_after": "11966571ffa71a979297a0c6c730c739f33d86a0578fe0b4b890dd4a7ce1c936",
+    "source_camera_json_sha256_before": "11966571ffa71a979297a0c6c730c739f33d86a0578fe0b4b890dd4a7ce1c936",
+    "source_station_tree_hashes_after": {
+      "fill_station.usda": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
+      "geometry/fill_station.usdc": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
+      "geometry/textures/color_B7C6CE.exr": "7b3ff7cc6c709d4b5ae34c40b60277db472b1c7d483a744cf0990ab7023d61cc"
+    },
+    "source_station_tree_hashes_before": {
+      "fill_station.usda": "5f58540c187ac16c4426bffb3ebbe559e62d6d63ff359afdb08867fc24b60af9",
+      "geometry/fill_station.usdc": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
+      "geometry/textures/color_B7C6CE.exr": "7b3ff7cc6c709d4b5ae34c40b60277db472b1c7d483a744cf0990ab7023d61cc"
+    },
+    "source_unchanged": true,
+    "specs_sha256": "e12fbdeea2bb966499e2f8ae23b9af27bf790e1b055734951fc4ec4ca4573f93",
+    "summary_sha256": "f3157d175f1140b7f0acc12f1c2ef86ed9f76875401522496f62366d5aebf331",
+    "variation_module_sha256": "71aea9f84e7b6c84e7ed807d3784891715e3ddbeac5dea8f17ed291d9f52a182"
+  },
+  "purpose": "Step 8 Revision 2 first v4-look train-chunk review",
+  "rendered_liquid_hsv": {
+    "eligible_frame_count": 60,
+    "mean_hue_circular_saturation_weighted_0_to_1": 0.21005857948064519,
+    "saturation": {
+      "count": 60,
+      "max": 0.2927426664432057,
+      "mean": 0.1074475336822831,
+      "median": 0.08979035112626643,
+      "min": 0.020833476706093493,
+      "p05": 0.03094602072033575,
+      "p95": 0.2736385647835495
+    },
+    "saturation_0_30_to_0_85": {
+      "count": 0,
+      "fraction_of_eligible": 0.0,
+      "range_inclusive": [
+        0.3,
+        0.85
+      ]
+    },
+    "value": {
+      "count": 60,
+      "max": 0.25681440345230094,
+      "mean": 0.13606653148855818,
+      "median": 0.13179171660280986,
+      "min": 0.0985282235706025,
+      "p05": 0.10239927953062386,
+      "p95": 0.17703313365783407
+    },
+    "value_0_05_to_0_09": {
+      "above_range_count": 60,
+      "below_range_count": 0,
+      "count": 0,
+      "fraction_of_eligible": 0.0,
+      "range_inclusive": [
+        0.05,
+        0.09
+      ]
+    }
+  },
+  "schema_version": 1,
+  "scope": {
+    "frame_count": 60,
+    "real_frames_opened": 0,
+    "role": "train",
+    "sealed_test_frames_opened": 0,
+    "seed_end": 104059,
+    "seed_start": 104000
+  },
+  "v4_look_pinned_hashes": {
+    "camera_match_sha256": "aeee0c5ef7e5b8b88678356f30de4d14a3126da70e4eb5c84711c674bfafc2f8",
+    "checker_sha256": "a03442a7da4cde31dee084ffbe3375f0574b370a78829c01976d77f49246e966",
+    "renderer_script_sha256": "8e23ece14ed5c58599981c59589d4c9f0484703fc629ad760333e0d6f09025cd",
+    "variation_module_sha256": "71aea9f84e7b6c84e7ed807d3784891715e3ddbeac5dea8f17ed291d9f52a182"
+  },
+  "v4_visual_contract": {
+    "automated_pass_fail_gate_applied": false,
+    "name": "accepted-pilot-v4-look",
+    "observed": {
+      "eligible_frame_count": 60,
+      "rendered_liquid_saturation": {
+        "count": 60,
+        "max": 0.2927426664432057,
+        "mean": 0.1074475336822831,
+        "median": 0.08979035112626643,
+        "min": 0.020833476706093493,
+        "p05": 0.03094602072033575,
+        "p95": 0.2736385647835495
+      },
+      "rendered_liquid_value": {
+        "count": 60,
+        "max": 0.25681440345230094,
+        "mean": 0.13606653148855818,
+        "median": 0.13179171660280986,
+        "min": 0.0985282235706025,
+        "p05": 0.10239927953062386,
+        "p95": 0.17703313365783407
+      },
+      "value_in_approximate_reference_range": {
+        "above_range_count": 2,
+        "below_range_count": 0,
+        "count": 58,
+        "fraction_of_eligible": 0.9666666666666667,
+        "range_inclusive": [
+          0.09,
+          0.19
+        ]
+      }
+    },
+    "reference": {
+      "basis": "2026-11-01 ~13:14 CST review: use the exact accepted pilot-v4 look and expect rendered liquid V about 0.09-0.19",
+      "manual_montage_traits": [
+        "wrapped printed labels",
+        "black holder",
+        "light near-neutral backdrop",
+        "grey or dark surface ovals on dark liquids",
+        "v4-like liquid surface cues with the accepted v4 glass limitations"
+      ],
+      "rendered_liquid_value_approximate_range": [
+        0.09,
+        0.19
+      ]
+    },
+    "review_status": "manual_review_required",
+    "v5_gates": {
+      "saturation_0_30_to_0_85": {
+        "applied": false,
+        "reason": "colour is added later as mask-guided training augmentation"
+      },
+      "value_0_05_to_0_09": {
+        "applied": false,
+        "reason": "the darkest tail is added later during training"
+      }
+    }
+  }
+}
