@@ -725,6 +725,12 @@ class SessionManager:
             "unavailable_reason": ("deterministic_decision_unavailable"
                                    if disposition == "insufficient_evidence" else None),
         }
+        for optional in (
+            "carryover_fraction", "delta_e_to_refs", "delta_e_to_prev",
+            "previous_cohort_index",
+        ):
+            if optional in deterministic:
+                decision_payload[optional] = deterministic[optional]
         if isinstance(source_time_s, (int, float)):
             decision_payload["source_time_s"] = float(source_time_s)
         self._emit(session, "vial_decision", decision_payload)

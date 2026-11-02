@@ -324,6 +324,18 @@ class QuickFillPipelineAdapter:
         self._fallback_position = 0
         self._previous_lab: list[float] | None = None
         self._plan_finished_emitted = False
+        self._previous_cohort_labs: np.ndarray | None = None
+        self._previous_cohort_index: int | None = None
+        self._latest_carryover: dict[str, object] = {
+            "status": "carryover_not_assessable_first_cohort",
+            "previous_recipe_end_lab": None,
+            "reference_lab": None,
+            "carryover_fraction": None,
+            "delta_e_to_refs": None,
+            "delta_e_to_prev": None,
+            "previous_cohort_index": None,
+        }
+        self._carryover_log_started = False
 
     @property
     def session_complete(self) -> bool:
@@ -375,6 +387,12 @@ class QuickFillPipelineAdapter:
         if len(ordered) < 2:
             return self._insufficient_decision(evidence, "cohort_too_short")
         labs = [row["measurement"]["median_lab"] for row in ordered]
+        lab_array = np.asarray(labs, dtype=float)
+        cohort_index = int(ordered[0].get("cohort_ordinal", 1))
+        reference_lab = np.median(lab_array[1:], axis=0)
+        carryover = self._carryover_metrics(
+            cohort_index, lab_array, reference_lab,
+        )
         differences = [math.dist(labs[0], reference) for reference in labs[1:]]
         if all(value <= 1.0 for value in differences):
             disposition, score, limits = "keep", 0.0, []
@@ -387,11 +405,19 @@ class QuickFillPipelineAdapter:
             f"vial_{index + 2}": value
             for index, value in enumerate(differences)
         }
+        self._latest_carryover = carryover
+        self._previous_cohort_labs = lab_array.copy()
+        self._previous_cohort_index = cohort_index
+        self._log_changeover(carryover, disposition)
         return {
             "disposition": disposition,
             "discard_score": score,
             "evidence_citations": evidence,
             "limit_codes": limits,
+            "carryover_fraction": carryover["carryover_fraction"],
+            "delta_e_to_refs": carryover["delta_e_to_refs"],
+            "delta_e_to_prev": carryover["delta_e_to_prev"],
+            "previous_cohort_index": carryover["previous_cohort_index"],
             "stages": [{
                 "stage_id": "end",
                 "evidence_id": evidence[0],
@@ -409,6 +435,7 @@ class QuickFillPipelineAdapter:
         return {
             "mode": "quick_fill", "vials": deepcopy(dict(vials)),
             "dispense_context": deepcopy(context),
+            "carryover_context": deepcopy(self._latest_carryover),
         }
 
     def run_vlm(self, _bundle: object) -> tuple[Mapping[str, object], ...]:
@@ -491,6 +518,65 @@ class QuickFillPipelineAdapter:
             "boundary_reason": boundary_reason, "plan_finished": False,
         }
 
+    def _carryover_metrics(
+        self, cohort_index: int, labs: np.ndarray, reference_lab: np.ndarray,
+    ) -> dict[str, object]:
+        if self._previous_cohort_labs is None:
+            return {
+                "status": "carryover_not_assessable_first_cohort",
+                "previous_recipe_end_lab": None,
+                "reference_lab": [float(value) for value in reference_lab],
+                "carryover_fraction": None,
+                "delta_e_to_refs": float(np.linalg.norm(labs[0] - reference_lab)),
+                "delta_e_to_prev": None,
+                "previous_cohort_index": None,
+            }
+        previous_lab = np.median(self._previous_cohort_labs, axis=0)
+        shift = labs[0] - reference_lab
+        axis = previous_lab - reference_lab
+        axis_length = float(np.linalg.norm(axis))
+        fraction = (
+            None if axis_length < 1.0
+            else float(np.dot(shift, axis) / np.dot(axis, axis))
+        )
+        return {
+            "status": (
+                "previous_and_current_recipes_visually_similar"
+                if fraction is None else "measured_from_run_colours"
+            ),
+            "previous_recipe_end_lab": [float(value) for value in previous_lab],
+            "reference_lab": [float(value) for value in reference_lab],
+            "carryover_fraction": fraction,
+            "delta_e_to_refs": float(np.linalg.norm(shift)),
+            "delta_e_to_prev": float(np.linalg.norm(labs[0] - previous_lab)),
+            "previous_cohort_index": self._previous_cohort_index,
+            "current_cohort_index": cohort_index,
+        }
+
+    def _log_changeover(
+        self, carryover: Mapping[str, object], disposition: str,
+    ) -> None:
+        previous = carryover.get("previous_cohort_index")
+        if previous is None:
+            return
+        if not self._carryover_log_started:
+            print(
+                "| changeover | delta_e_to_refs | delta_e_to_prev | "
+                "carryover_fraction | rule_call |",
+                flush=True,
+            )
+            print("|---|---:|---:|---:|---|", flush=True)
+            self._carryover_log_started = True
+        fraction = carryover.get("carryover_fraction")
+        rendered_fraction = "null" if fraction is None else f"{float(fraction):.6f}"
+        print(
+            f"| cohort {previous} -> {carryover.get('current_cohort_index')} | "
+            f"{float(carryover['delta_e_to_refs']):.6f} | "
+            f"{float(carryover['delta_e_to_prev']):.6f} | "
+            f"{rendered_fraction} | {disposition} |",
+            flush=True,
+        )
+
     def _volume_sanity(
         self, visible_height_px: float, group: Mapping[str, object] | None,
     ) -> Mapping[str, object]:
@@ -572,6 +658,7 @@ class QuickFillPipelineAdapter:
                 "measured_or_inferred": "measured",
             },
             "quick_fill_context": {
+                "cohort_index": cohort,
                 "dispense_steps": (
                     deepcopy(group["steps"])
                     if isinstance(group, Mapping) else []
