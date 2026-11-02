@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 
 import numpy as np
@@ -253,3 +254,107 @@ def test_rolling_eof_uses_the_same_failure_reason_policy(
         "limit_codes": [expected_reason], "evidence_citations": [],
         "cohort_ordinal": 1,
     }]
+
+
+def test_rolling_end_of_stream_exception_uses_rolling_reason_policy(
+    tmp_path, monkeypatch,
+):
+    class EndFailureAdapter:
+        requires_complete = False
+        session_complete = False
+
+        def process_frame(self, _frame, **_metadata):
+            return ()
+
+        def end_of_stream(self):
+            raise ValueError("debounced camera stream states do not match recipe order")
+
+    manager, session_id, state = _run(
+        tmp_path, monkeypatch, Factory(EndFailureAdapter), Frames([0]),
+    )
+
+    assert state["state"] == "stopped"
+    assert manager.decisions(session_id)[0]["limit_codes"] == [
+        "unsupported_recipe_profile"
+    ]
+
+
+def test_disabled_rolling_does_not_read_unused_source_profile(
+    tmp_path, monkeypatch,
+):
+    class ProfileMustNotBeRead(Frames):
+        def profile(self, _stop):
+            raise AssertionError("legacy adapter does not consume a source profile")
+
+    class CompleteAdapter:
+        requires_complete = True
+        session_complete = False
+
+        def process_frame(self, _frame, **_metadata):
+            self.session_complete = True
+            return ()
+
+    _manager, _session_id, state = _run(
+        tmp_path, monkeypatch, Factory(CompleteAdapter),
+        ProfileMustNotBeRead([0]), rolling=False,
+    )
+
+    assert state["state"] == "stopped"
+
+
+def test_reused_reference_frame_applies_fresh_adapter_boundary_plan(
+    tmp_path, monkeypatch,
+):
+    seam = np.full((480, 640, 3), 20, dtype=np.uint8)
+    seam_sha = hashlib.sha256(seam.tobytes()).hexdigest()
+
+    class BoundaryAdapter:
+        requires_complete = True
+        eof_abstention_reason = "tracker_stable_tail_missing"
+        vial_boundaries = ({
+            "schema_version": "provenance-bound-vial-boundary-v1",
+            "case_id": "cohort-2-case-1", "vial_id": "cohort-2-vial-1",
+            "vial_position": 1, "frame_index": 1,
+            "frame_sha256": seam_sha, "source_sha256": "2" * 64,
+        },)
+
+        def __init__(self):
+            self.values = []
+            self.boundary_indices = []
+            self.lifecycle_closed = False
+
+        @property
+        def session_complete(self):
+            return self.boundary_indices == [1]
+
+        def configure_source_profile(self, _profile):
+            return None
+
+        def process_frame(self, frame, **_metadata):
+            self.values.append(int(frame[0, 0, 0]))
+            return ()
+
+        def close_tracker_vial(self, boundary):
+            self.boundary_indices.append(boundary["frame_index"])
+            return ()
+
+        def close(self):
+            self.lifecycle_closed = True
+
+    class BoundaryFactory(Factory):
+        def for_session(self, request, _device):
+            self.requests.append(request)
+            adapter = CompleteAfterTwo() if len(self.adapters) == 0 else BoundaryAdapter()
+            self.adapters.append(adapter)
+            return adapter
+
+    factory = BoundaryFactory()
+    manager, session_id, state = _run(
+        tmp_path, monkeypatch, factory, Frames([10, 20, 30]),
+    )
+
+    assert state["state"] == "stopped"
+    assert factory.adapters[1].values == [20, 30]
+    assert factory.adapters[1].boundary_indices == [1]
+    assert factory.adapters[1].lifecycle_closed is True
+    assert manager.decisions(session_id) == []

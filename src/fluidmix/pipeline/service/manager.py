@@ -219,7 +219,7 @@ class SessionManager:
                     if not source_profile_configured:
                         profile_reader = getattr(self._frame_source, "profile", None)
                         configurator = getattr(adapter, "configure_source_profile", None)
-                        if callable(profile_reader):
+                        if callable(profile_reader) and (rolling or callable(configurator)):
                             source_profile = profile_reader(session.stop)
                         if callable(profile_reader) and callable(configurator):
                             if source_profile is None:
@@ -256,15 +256,17 @@ class SessionManager:
                         reference_frame, reference_elapsed, reference_index = pending_reference
                         pending_reference = None
                         try:
-                            for result in adapter.process_frame(
-                                reference_frame, frame_index=reference_index,
+                            self._process_adapter_frame(
+                                session, adapter, reference_frame,
+                                frame_index=reference_index,
                                 elapsed_seconds=reference_elapsed,
-                            ):
-                                self._accept_result(session, adapter, result)
-                            for result in adapter.process_frame(
-                                frame, frame_index=index, elapsed_seconds=source_elapsed
-                            ):
-                                self._accept_result(session, adapter, result)
+                                boundary_plan=boundary_plan,
+                            )
+                            self._process_adapter_frame(
+                                session, adapter, frame, frame_index=index,
+                                elapsed_seconds=source_elapsed,
+                                boundary_plan=boundary_plan,
+                            )
                         except Exception as error:
                             reason = self._rolling_failure_code(error)
                             if reason is None:
@@ -279,24 +281,11 @@ class SessionManager:
                             resync_still_frames = 0
                     elif adapter is not None:
                         try:
-                            for result in adapter.process_frame(
-                                frame, frame_index=index, elapsed_seconds=source_elapsed
-                            ):
-                                self._accept_result(session, adapter, result)
-                            if index in boundary_plan:
-                                checked_boundary = boundary_plan[index]
-                                observed_frame_sha256 = hashlib.sha256(
-                                    memoryview(frame).cast("B")
-                                ).hexdigest()
-                                if observed_frame_sha256 != checked_boundary["frame_sha256"]:
-                                    raise RuntimeError("vial boundary frame SHA-256 mismatch")
-                                closer = getattr(adapter, "close_tracker_vial", None)
-                                if not callable(closer):
-                                    raise RuntimeError(
-                                        "provenance-bound vial boundary requires tracker close"
-                                    )
-                                for result in closer(checked_boundary):
-                                    self._accept_result(session, adapter, result)
+                            self._process_adapter_frame(
+                                session, adapter, frame, frame_index=index,
+                                elapsed_seconds=source_elapsed,
+                                boundary_plan=boundary_plan,
+                            )
                         except Exception as error:
                             reason = self._rolling_failure_code(error) if rolling else None
                             if reason is None:
@@ -335,8 +324,19 @@ class SessionManager:
                 ):
                     end_of_stream = getattr(adapter, "end_of_stream", None)
                     if callable(end_of_stream):
-                        for result in end_of_stream():
-                            self._accept_result(session, adapter, result)
+                        try:
+                            for result in end_of_stream():
+                                self._accept_result(session, adapter, result)
+                        except Exception as error:
+                            reason = self._rolling_failure_code(error) if rolling else None
+                            if reason is None:
+                                raise
+                            self._emit_abstention(
+                                session, reason,
+                                rolling_cohort_ordinal=cohort_ordinal,
+                            )
+                            self._close_adapter(adapter)
+                            adapter = None
                 if (
                     adapter is not None
                     and not session.stop.is_set()
@@ -379,6 +379,29 @@ class SessionManager:
         closer = getattr(adapter, "close", None)
         if callable(closer):
             closer()
+
+    def _process_adapter_frame(
+        self, session: _Session, adapter: object, frame: object, *,
+        frame_index: int, elapsed_seconds: float,
+        boundary_plan: Mapping[int, Mapping[str, object]],
+    ) -> None:
+        for result in adapter.process_frame(
+            frame, frame_index=frame_index, elapsed_seconds=elapsed_seconds
+        ):
+            self._accept_result(session, adapter, result)
+        if frame_index not in boundary_plan:
+            return
+        checked_boundary = boundary_plan[frame_index]
+        observed_frame_sha256 = hashlib.sha256(
+            memoryview(frame).cast("B")
+        ).hexdigest()
+        if observed_frame_sha256 != checked_boundary["frame_sha256"]:
+            raise RuntimeError("vial boundary frame SHA-256 mismatch")
+        closer = getattr(adapter, "close_tracker_vial", None)
+        if not callable(closer):
+            raise RuntimeError("provenance-bound vial boundary requires tracker close")
+        for result in closer(checked_boundary):
+            self._accept_result(session, adapter, result)
 
     @classmethod
     def _rolling_failure_code(cls, error: Exception) -> str | None:
