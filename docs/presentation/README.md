@@ -14,6 +14,7 @@ This folder is the source for the values. If the page and this folder differ, th
 | [tokens.json](tokens.json) | Colours (light and dark), type styles, spacing, radius, each with a usage note |
 | [tokens.css](tokens.css) | CSS variables, generated: `python scripts/presentation_tokens_css.py` |
 | [moe.mplstyle](moe.mplstyle) | matplotlib style: `plt.style.use("docs/presentation/moe.mplstyle")` |
+| [sam2/](sam2/) | Spark-generated SAM2 coverage report, validation limits and figure sheets |
 
 ## Rules in short
 

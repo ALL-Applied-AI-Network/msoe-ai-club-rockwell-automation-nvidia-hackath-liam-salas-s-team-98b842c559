@@ -1,0 +1,100 @@
+PRESENTATION RESULTS — FLUID MIXING / CARRYOVER
+Audit date: 2026-11-01
+
+Use these as presentation talking points. Numbers are copied from repository docs, open PR descriptions, and the merged PR #18 report. Every result below includes its evidence status and limit.
+
+BEST HEADLINES
+
+1) We found a strong real-line carryover signal.
+   On real video 5, the first vial after a recipe change was a median 22.9 CIE76 color-distance units from its recipe's settled color; the second vial was only 2.3. This is an 8-of-8 flag rate for changeover-first vials with the fixed CIE76 2.0 rule, compared with 7-of-8 for a stand-in for the existing known-color check.
+   Evidence: open PR #19, docs/carryover-video5.md on that branch.
+   Safe wording: “On one unlabeled real recording, our carryover-aware decision stage separated the first changeover vial from the settled second vial: median ΔE 22.9 versus 2.3, and it flagged all 8 observed changeover-first vials.”
+   Limit: video 5 has no defect/cause labels; this is not a validated accuracy or recall result. Camera synchronization is assumed, and the threshold was adopted from the twin run after seeing the real run.
+
+2) The system links the visible error to the previous recipe.
+   In PR #19, the first-vial deviation pointed toward the previous recipe with median direction cosine 0.97 and fitted previous-recipe share 0.68. Larger recipe changes produced larger first-vial errors in 6 of 8 changeovers.
+   Safe wording: “The color error was not just an anomaly score: its direction matched the previous recipe, supporting a carryover explanation.”
+   Limit: this supports a process hypothesis on one recording; it does not prove causality or physical absorbance calibration.
+
+3) Synthetic-only training transferred to real cap/seal footage.
+   Merged PR #18 evaluated a 275k-parameter U-Net trained only on synthetic twin renders against a YOLO baseline also trained only on twin renders. On all five real cap_seal videos (about 105k frames), dense53 reached precision 0.957 and recall 0.920 versus baseline 0.945 and 0.873; false boxes fell from 2,170 to 1,795.
+   Safe wording: “A lightweight model trained only on synthetic renders improved real-video frame detection over our YOLO baseline: precision 0.957, recall 0.920, and 17% fewer false boxes.”
+   Limit: this was exposed validation while selecting among 25 augmentation runs, not a blind test. Track identity coverage was worse for the frozen tracker: 0.65 versus 0.78, and exits found were 29/49 versus 35/49.
+   Source: merged PR #18, https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/18
+
+4) A tracker protocol variant recovered nearly all reference-line exits, with a clear tradeoff.
+   The rebirth tracker comparison in PR #18 raised dense53 track coverage from 0.65 to 0.90 and reference-line exits from 29/49 to 48/49. It produced more fragmentations and ID switches than the frozen baseline, so it is an engineering tradeoff rather than an unqualified win.
+   Safe wording: “We identified a concrete tracker failure mode and tested a rebirth protocol that recovered 48 of 49 exits; the tradeoff was more fragmentation and ID switching.”
+   Limit: one scoring run, exposed validation, and each rebirth receives a new camera ID.
+
+5) Dispense timing is a useful, fast baseline.
+   PR #13 measured the stream on video 5 at about 0.6 ms per frame on a laptop CPU. Timing recovered the logged dispense order in 26 of 28 vials and gave per-tank rate consistency of 6%, 5%, and 12% coefficient of variation for T-100, T-200, and T-400.
+   Safe wording: “Before using a large model, a simple timing baseline recovered dispense order in 26 of 28 vials.”
+   Limit: one recipe-order family, hand-placed regions, and video 5 only; videos 1–4 lack recipe ground truth.
+
+6) We observed direct visual evidence of shared-tube carryover.
+   In video 5, a clear T-100 dose appeared blue for its full visible burst in vial 8, and a blue T-400 dose appeared pale orange in vial 28. The shared dispensing tube is out of frame, but these observations are consistent with residue leaving the common tube at the start of the next dose. The vial 8 case suggests roughly 20 mL or more of hold-up volume.
+   Safe wording: “The camera shows the next dose can visibly inherit the previous fluid’s color: a clear dose came out blue, and a blue dose came out orange-tinted.”
+   Limit: the hold-up volume is an inference, not a direct tube measurement; stream color is uncalibrated and should not be fed into absorbance math.
+
+7) We measured a repeatable within-dose color drift signal.
+   PR #13 found stream color changed within the dose in 59 of 71 bursts, with median a*b* drift 2.2 versus a frame-to-frame noise floor of 0.17. This supports modeling the shared path as gradual mixing rather than a simple one-dose lag.
+   Limit: background, compression, vial-wall effects, and hand-selected regions may contribute; the direction is not yet fully explained.
+
+8) The color/level measurements quantify what is and is not reliable.
+   Liquid-level estimation had 7.5 mL median error when the surface was visible below the holder, but 19 mL when the holder/barcode obscured it. Settled-vial recipe identification was weak (roughly 2 of 20 held-out vials in the reported 2nd/3rd-place range), so the project correctly shifted emphasis toward anomaly detection and cause explanation rather than direct recipe naming.
+   Source: open PR #13.
+
+9) We fixed a major data-alignment problem before measuring results.
+   Across all 15 camera videos, the burned-in clock advances about 1.2157 wall-seconds per video-second, not 1:1. The corrected mapping matched all 36 informative sampled stills within ±2 frames, with median one frame. This prevents a timing bug from being mistaken for a vision result.
+   Source: docs/video_timing.md.
+
+10) The project has a reproducible, honest data inventory.
+   The dataset inventory records 4,673 dataset files, 15 MP4s, 4,650 JPEGs, three synchronized cameras, and 30 labeled recipe/fill-window vials across 10 recipes in video 5. The current vial-check batch processed 26 videos and 11,935 measurement rows, but reported 0 scientifically usable videos and 26 relative-only videos.
+   Safe wording: “We built the measurement and provenance pipeline across the available recordings, while explicitly refusing to call relative-only measurements scientific validation.”
+   Sources: docs/data_inventory.md; data/vial_checks/batch_results/summary.json; open PR #21.
+
+11) The SAM2 pipeline now has a defensible operational-coverage result.
+   The Spark package processed 26/26 videos with 0 batch failures, generated 11,935
+   sampled-frame rows, and returned 11,200/11,935 (93.8%) vial-present relative
+   measurements. The output explicitly flags no-vial and vial-shift intervals.
+   Safe wording: “Our SAM2 pipeline completed the full 26-video dataset and produced
+   time-aligned relative liquid-appearance signals with explicit quality flags.”
+   Limit: this is operational coverage, not accuracy. All 26 videos are relative-only;
+   0/156 human validation labels are complete, references are unverified, and no
+   physical height/volume calibration exists.
+   Sources: docs/presentation/sam2/PRESENTATION_REPORT.md and
+   docs/presentation/sam2/ACCURACY_VALIDATION.md.
+
+WHAT NOT TO BOAST AS A RESULT
+
+- PR #14 is SAM 2.1 setup/evaluation infrastructure. SAM itself has not run on the Spark; its CPU dry-run is only a stand-in.
+- PR #16 is a synthetic residue-context proposal. Its 19.8–20.3 mL recovery and ΔE≈24 example are built to fit the synthetic model, not measured plant evidence.
+- The Beer–Lambert calibration is not physically valid yet. The real video-5 fit returns negative absorbance; do not present it as calibrated absorbance, physical accuracy, or a validated residue fraction.
+- The twin is useful for synthetic training and controlled tests, but twin results do not prove real-fluid physics. Keep twin metrics separate from real-video observations.
+- Do not claim a defect accuracy, false-positive rate, or causal accuracy on video 5 without independent labels. The dataset has recipe and fill-window labels, not defect/cause labels.
+
+ONE-SLIDE VERSION
+
+Problem: A shared dispensing path can tint the first vial after a recipe change.
+Evidence: On one real recording, first-vial median ΔE was 22.9 versus 2.3 for the second vial; all 8 observed changeover-first vials were flagged by the fixed rule.
+Cause link: Deviation direction matched the previous recipe (median cosine 0.97; fitted share 0.68), and the footage shows clear liquid coming out blue after a blue recipe.
+Scale-up: A 275k-parameter model trained only on synthetic renders reached 0.957 precision / 0.920 recall on five real cap/seal videos, with 17% fewer false boxes than YOLO.
+Honesty: These are strong prototype results, not final plant validation: video 5 lacks defect labels, the tracker has tradeoffs, and real absorbance calibration is still blocked.
+
+SOURCE LINKS
+
+- PR #13: https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/13
+- PR #14: https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/14
+- PR #16: https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/16
+- PR #18 (merged): https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/18
+- PR #19: https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/19
+- PR #20: https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/20
+- PR #21: https://github.com/ALL-Applied-AI-Network/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/pull/21
+- Repo docs: docs/stream.md, docs/video_timing.md, docs/data_inventory.md, docs/absorbance.md, docs/review-inn-22-24.md
+
+CHECKS RUN DURING THIS AUDIT
+
+- python -m pytest tests -q: 70 passed, 1 failed, 1 skipped, 6 errors. The errors are known Windows symlink-privilege fixture failures; the remaining failure is the known ffmpeg fixture-path regression.
+- python scripts/smoke_absorbance.py: synthetic smoke passed; fraction 0.150000, RMS absorbance residual 0.
+- python scripts/check_agent_docs.py: reports the known .claude/skills link issue (must link to .agents/skills).
