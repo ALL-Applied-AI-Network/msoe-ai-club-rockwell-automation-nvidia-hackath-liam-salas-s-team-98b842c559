@@ -16,8 +16,10 @@ There is no package installer: scripts and tests add src/ to their own import pa
 
 Pytest runs the five original synthetic math checks plus review regressions for input
 validation, data-tool failures and skill metadata. These do not verify real camera accuracy
-or physical rendering. Expected: 120 of 121 pass; tests/test_tank_station.py::test_committed_asset_rebuilds_exactly
-fails on this host independently of these branches (a USD snapshot byte-compare). The direct python tests/test_absorbance.py runner covers only the
+or physical rendering. On the Windows review host, the documentation fixtures need symlink
+privileges and the fake-ffmpeg fixture expects a POSIX executable. The optional USD snapshot
+byte comparison also failed before the carryover abstention fix. These are known check
+limitations, not a passing suite. The direct python tests/test_absorbance.py runner covers only the
 five original math checks and is not a substitute for the full pytest suite.
 
 ## Small data and smoke run

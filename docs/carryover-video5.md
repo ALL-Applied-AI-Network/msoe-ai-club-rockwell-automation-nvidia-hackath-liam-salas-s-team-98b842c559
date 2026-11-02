@@ -39,6 +39,19 @@ to any outcome).
 *other* vials of recipe R whose position in the run is 2 or later. A vial never contributes to its own
 reference. No such peer: `insufficient_evidence`.
 
+**Measurement failures and abstention (implemented).** Each eligible vial's entire window must be
+readable and measurable. A failed seek, unreadable frame, unusable RGB crop or decoder error produces
+a null measurement with a `measurement_error` reason, null noise/diagnostics and no accepted
+`evidence.window_frames`; the next vial is still attempted. No partial-window colour is used.
+The decision stage also rejects malformed, masked or nonfinite Lab vectors and excludes those vials
+from recipe references and the known-colour baseline. A vial without a usable measurement or a usable
+leave-one-out reference returns `insufficient_evidence`, with the reason in `records.json` and
+`results.md`. Even when every window fails, both files are written; unavailable statistics read `n/a`.
+An unopenable source video, invalid window/threshold configuration or unexpected programming error
+remains fatal. Camera-ID associations are still unverified and do not gate the colour decision.
+Synthetic regression tests establish this error handling; the real-video measurements below have
+not been rerun for this change. The crop, saturation selection and threshold are unchanged.
+
 **Rule, stated exactly as implemented in `src/fluidmix/carryover/decide.py`:**
 
     primary:   tau = 2.0, the CIE76 colour-visibility threshold the team's twin pipeline froze on twin renders

@@ -25,6 +25,8 @@ recipe's reference colour; the real Teledyne outputs are not in the dataset). Th
 recipe uses the same leave-one-out reference. Such a check cannot tell a wrong-but-known colour
 from the right one.
 """
+from numbers import Real
+
 import numpy as np
 
 from fluidmix.carryover.measure import cie76
@@ -41,12 +43,26 @@ TAU_TWIN_SOURCE = ("CIE76 2.0: the colour-visibility threshold frozen on twin re
                    "(outputs/pipeline-20261028 PROGRESS.md and FINAL-REPORT.md) before any real-video measurement")
 
 
+def valid_lab(value):
+    """A usable colour has exactly three finite real channels, with no masked values."""
+    if np.ma.isMaskedArray(value) and np.ma.getmaskarray(value).any():
+        return False
+    try:
+        channels = np.asarray(value, dtype=object)
+        if channels.shape != (3,) or any(
+                not isinstance(x, Real) or isinstance(x, (bool, np.bool_)) for x in channels):
+            return False
+        return bool(np.isfinite(np.asarray(channels, dtype=np.float64)).all())
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def reference_for(vial, records):
     """Leave-one-out reference for `vial`: (median Lab of steady peers, source text) or (None, text)."""
     me = records[vial]
     peers = [r for v, r in records.items()
              if v != vial and r["recipe_id"] == me["recipe_id"] and r["position_in_run"] >= 2
-             and r.get("measured_lab") is not None]
+             and not r.get("measurement_error") and valid_lab(r.get("measured_lab"))]
     source = (f"median of recipe {me['recipe_id']} vials at position>=2 excluding this vial "
               f"(vials {', '.join(str(r['vial']) for r in peers) or 'none'})")
     if not peers:
@@ -69,7 +85,7 @@ def _known_colour_check(vial, records, tau):
     for recipe in sorted({r["recipe_id"] for r in records.values()}):
         peers = [r for v, r in records.items()
                  if v != vial and r["recipe_id"] == recipe and r["position_in_run"] >= 2
-                 and r.get("measured_lab") is not None]
+                 and not r.get("measurement_error") and valid_lab(r.get("measured_lab"))]
         if not peers:
             continue
         d = cie76(me["measured_lab"], np.median([r["measured_lab"] for r in peers], 0))
@@ -84,13 +100,28 @@ def decide(records, tau=None):
     known_colour_check in every record (dict keyed by vial). Returns tau."""
     if tau is None:
         tau = TAU_TWIN
+    if not isinstance(tau, Real) or isinstance(tau, (bool, np.bool_)):
+        raise ValueError("tau must be a finite nonnegative real scalar")
+    try:
+        tau = float(tau)
+    except OverflowError as exc:
+        raise ValueError("tau must be a finite nonnegative real scalar") from exc
+    if not np.isfinite(tau) or tau < 0:
+        raise ValueError("tau must be a finite nonnegative real scalar")
+    # Validate all vials before any reference is built, so an invalid peer cannot poison
+    # a valid vial. Null the unusable values so records remain serializable as strict JSON.
+    for r in records.values():
+        if r.get("measurement_error") or (r.get("measured_lab") is not None
+                                          and not valid_lab(r["measured_lab"])):
+            r["measurement_error"] = r.get("measurement_error") or "invalid measured Lab: expected three finite real channels"
+            r["measured_lab"] = r["measurement_noise_dE"] = r["diagnostics"] = None
     for vial, r in records.items():
         r["tau"] = round(tau, 3)
         r["reference_lab"], r["reference_source"] = None, None
         r["dE_vs_reference"], r["known_colour_check"] = None, None
         if r.get("measured_lab") is None:
             r["decision"] = "insufficient_evidence"
-            r["reason"] = r.get("exclusion_reason") or "no measurement"
+            r["reason"] = r.get("measurement_error") or r.get("exclusion_reason") or "no measurement"
             continue
         ref, source = reference_for(vial, records)
         r["reference_source"] = source
