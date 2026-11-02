@@ -782,15 +782,51 @@ class DefaultProductionFactory:
 
     def __init__(self):
         self._factory: ProductionAdapterFactory | None = None
+        self._quick_models: dict[tuple[str, str], object] = {}
 
     def __call__(self, run_context: Mapping[str, object], device: str):
         raise ProductionFactoryError("production factory requires a session source binding")
 
     def for_session(self, request: Mapping[str, object], device: str):
+        if os.environ.get("FLUIDMIX_QUICK_FILL") == "1":
+            return self._quick_fill_session(request, device)
         validate_session_profile(request)
         if self._factory is None:
             self._factory = ProductionAdapterFactory()
         return self._factory.for_session(request, device)
+
+    def _quick_fill_session(
+        self, request: Mapping[str, object], device: str,
+    ) -> object:
+        source, context = request.get("source"), request.get("run_context")
+        if (
+            not isinstance(source, Mapping)
+            or source.get("kind") not in {"file", "video", "v4l2", "rtsp"}
+            or not isinstance(context, Mapping)
+        ):
+            raise ProductionFactoryError("quick-fill session request is invalid")
+        from fluidmix.perception.cnn.fill_level_adapter import (
+            configured_weights, load_fill_level_model, predict_fill_level_pair,
+        )
+        from fluidmix.pipeline.service.quick_fill import QuickFillPipelineAdapter
+
+        weights = configured_weights()
+        if weights is None or weights.is_symlink() or not weights.is_file():
+            raise ProductionFactoryError(
+                "quick-fill requires FLUIDMIX_FILL_CNN_WEIGHTS"
+            )
+        key = (str(weights.resolve()), device)
+        model = self._quick_models.get(key)
+        if model is None:
+            model = load_fill_level_model(weights, device)
+            self._quick_models[key] = model
+
+        def predictor(current: np.ndarray, reference: np.ndarray) -> object:
+            return predict_fill_level_pair(
+                model, current, reference, threshold=0.5, device=device,
+            )
+
+        return QuickFillPipelineAdapter(predictor, context)
 
 
 factory = DefaultProductionFactory()

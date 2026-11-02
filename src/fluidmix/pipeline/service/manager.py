@@ -807,12 +807,23 @@ class SessionManager:
                  and math.isfinite(float(row["discard_score"]))
                  and 0.0 <= float(row["discard_score"]) <= 1.0]
         mean = sum(votes) / len(votes) if votes else None
+        rule_only = (
+            bool(getattr(adapter, "rule_only", False))
+            and det_admitted
+            and not admitted_attempts
+        )
+        final_disposition = (
+            str(det["disposition"])
+            if rule_only
+            else "insufficient_evidence" if len(votes) < 2
+            else "discard" if mean is not None and mean >= 0.5
+            else "keep"
+        )
         final = {
-            "type": "final", "vial_id": target_vial_id, "weighting": "equal",
+            "type": "final", "vial_id": target_vial_id,
+            "weighting": "deterministic_only" if rule_only else "equal",
             "valid_source_count": len(votes), "mean_discard_score": mean,
-            "final_disposition": ("insufficient_evidence" if len(votes) < 2
-                                  else "discard" if mean is not None and mean >= 0.5
-                                  else "keep"),
+            "final_disposition": final_disposition,
             "sources": [dict(row) for row in sources],
         }
         session.decisions.append(final)
