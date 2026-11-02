@@ -345,6 +345,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--adapter-factory", required=True, metavar="MODULE:CALLABLE")
     parser.add_argument("--build-attestation", required=True, metavar="JSON_PATH")
+    parser.add_argument(
+        "--allow-origin", action="append", default=[], metavar="ORIGIN",
+        help="add one exact browser origin to the reviewed CORS allowlist",
+    )
     args = parser.parse_args(argv)
     factory = _load_factory(args.adapter_factory)
     attestation = load_build_attestation(args.build_attestation)
@@ -357,7 +361,10 @@ def main(argv: list[str] | None = None) -> int:
         accepted_pipeline_commit=attestation["accepted_pipeline_commit"],
         development_cohort=getattr(factory, "development_cohort", None),
     )
-    RunnerHTTPServer((args.host, args.port), manager).serve_forever()
+    allowed_origins = DEFAULT_ORIGINS | frozenset(args.allow_origin)
+    RunnerHTTPServer(
+        (args.host, args.port), manager, allowed_origins=allowed_origins,
+    ).serve_forever()
     return 0
 
 

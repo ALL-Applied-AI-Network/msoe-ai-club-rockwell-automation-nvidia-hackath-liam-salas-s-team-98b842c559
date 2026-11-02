@@ -79,6 +79,49 @@ def test_http_build_attestation_fails_closed_when_absent_malformed_or_mismatched
         load_build_attestation(path)
 
 
+def test_http_cli_extends_the_reviewed_cors_allowlist(monkeypatch):
+    from fluidmix.pipeline.service import http
+
+    captured = {}
+
+    class Factory:
+        accepted_pipeline_commit = PIN
+        development_cohort = "varied-v3"
+
+        def __call__(self, *_args):
+            return ThreeVialAdapter()
+
+    class Server:
+        def __init__(self, address, manager, *, allowed_origins):
+            captured.update({
+                "address": address,
+                "manager": manager,
+                "allowed_origins": allowed_origins,
+            })
+
+        def serve_forever(self):
+            captured["served"] = True
+
+    monkeypatch.setattr(http, "_load_factory", lambda _value: Factory())
+    monkeypatch.setattr(http, "load_build_attestation", lambda _path: {
+        "service_commit": SERVICE_COMMIT,
+        "accepted_pipeline_commit": PIN,
+    })
+    monkeypatch.setattr(http, "RunnerHTTPServer", Server)
+
+    assert http.main([
+        "--host", "127.0.0.1", "--port", "8766",
+        "--adapter-factory", "unused:factory",
+        "--build-attestation", "unused.json",
+        "--allow-origin", "http://localhost:62308",
+    ]) == 0
+    assert captured["address"] == ("127.0.0.1", 8766)
+    assert captured["served"] is True
+    assert captured["allowed_origins"] == http.DEFAULT_ORIGINS | {
+        "http://localhost:62308"
+    }
+
+
 def _server(*, event_retention=2048):
     from fluidmix.pipeline.service.http import RunnerHTTPServer
     from fluidmix.pipeline.service.manager import SessionManager
