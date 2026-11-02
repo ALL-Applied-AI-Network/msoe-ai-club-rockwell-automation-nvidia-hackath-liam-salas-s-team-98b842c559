@@ -2,6 +2,67 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 10 measured real-check checkpoint
+
+### Result
+
+- **Measured, untuned real-check result:** commit `4d9a34a` froze the evaluator before any
+  production frame access. The main review remained SHA-256 `ddfba000...71d1`, so the
+  existing Brev instance ran exactly one substantive attempt with selected weight
+  `1949bdea...b094`, full `holder_band_v2`, rows `[83,427)` and the hand-measured
+  3.04-row/mL ruler. All 1,470 settled frames across the 27 approved vials were decoded and
+  scored once in about eight seconds. There was no model, rule, ruler or evaluator tuning.
+- Final vial statuses were 19 visible, eight hidden, zero abstain and zero no-clean-frame.
+  Across the 19 point readings, absolute error median/p95/max was
+  `2.434/22.961/23.553` mL. Counts within 1/2/5 mL were `4/7/11`, or
+  `21.05%/36.84%/57.89%`. The largest visible misses were vials 4 and 5: their 40 mL
+  recipes were read near 63 mL, errors `+23.553` and `+22.895` mL.
+- Five of eight hidden ranges contained the recipe volume (62.5%). Every reported hidden
+  range was raw rows `[200,292]`, or `[42.171,72.434]` mL with width 30.263 mL. This remains
+  a broad large-error flag, not a precise estimate. The two intended hidden-zone vials were
+  both called hidden and both contained 60 mL.
+- By zone: visible had seven visible and three hidden results, point readings within
+  1/2/5 mL `2/3/4`, and hidden containment `0/3`; edge had 12 visible and three hidden,
+  within `2/4/7`, and hidden containment `3/3`; hidden had two hidden, both containing the
+  recipe. By sequence type, transitions had four visible/three hidden, visible median
+  8.684 mL and hidden containment `2/3`; repeats had 15 visible/five hidden, visible median
+  2.434 mL and hidden containment `3/5`.
+- Integrity passed: exact approved vial order and inclusive spans, 1,470 unique ordered
+  per-frame records, visible/edge/hidden `10/15/2`, transition/repeat `7/20`, and zero
+  train, validation, test or calibration images/manifests opened in Step 10. An independent
+  local audit recomputed every per-vial record and all overall/zone/sequence aggregates from
+  the ignored frame JSONL with no mismatch.
+- Full ignored summary SHA-256 is `c91bdddd...db32`; the byte-identical committed compact
+  result is `5a0ad63b...5036`; ignored frame evidence is `c65f6b9c...8256`. Container
+  outputs were copied to fresh host `collected-v1`, archived, then copied to fresh ignored
+  local `collected-v1`; both output/evidence manifests verified. Evidence manifest is
+  `97b55c87...0ca6`, collected archive `446aeb7b...ed2`, and immutable production input
+  archive `c9509800...55fe`.
+- Required disclosures are embedded: system calibration failed; Step 10 ran anyway by
+  explicit user decision; the ruler is hand-measured rather than system-fitted; and the
+  result is measured once and untuned. Work now stops at the Step 10 checkpoint. Brev
+  `isaac-launchable-d70fec` remains running and idle for review and possible later fixes.
+
+### Commands run
+
+- Freeze and commit the Step 10 evaluator; run 102 passing/one skipped neighboring tests,
+  compilation, CLI and whitespace checks; complete independent pre-access code audits.
+- Build and audit an immutable input archive; verify all hashes locally, on the fresh Brev
+  host root and in the fresh container root; re-read/hash the review before launch.
+- Launch the one detached `real-attempt-01`; verify state/progress/process/GPU and all output
+  hashes; copy outputs container -> fresh host -> fresh ignored local paths without
+  overwrite; independently recompute the final aggregations from 1,470 frame records.
+
+### Problems
+
+- The first `codex-02` environment preflight found that the Step 7 virtual environment did
+  not contain OpenCV. `set -e` stopped before the runner launch, output/state creation or
+  `VideoCapture`, so it was not a real-check attempt and exposed zero frames. Those local,
+  host and container inputs remain preserved. A fresh audited `codex-03` package changed
+  only its root/contract and selected `/isaac-sim/python.sh`, whose OpenCV, Torch, CUDA and
+  GPU imports passed. Its single production attempt then completed normally; no retry was
+  needed.
+
 ## 2026-11-01 — Step 10 pre-real-check freeze
 
 ### Result
