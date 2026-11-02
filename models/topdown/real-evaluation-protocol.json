@@ -1,0 +1,149 @@
+{
+  "name": "dense53-real-conveyor-caps",
+  "falsifier": "No claim of overall improvement if recall, false alarms, or identity coverage regresses; report tradeoffs with counts. No real-driven selection.",
+  "batch": 16,
+  "imgsz": 640,
+  "precision": "FP32",
+  "rect": true,
+  "tracker": {
+    "entry_y": 436,
+    "exit_y": 22,
+    "max_gap": 5,
+    "gate": 42,
+    "min_hits": 3,
+    "retire_on_exit": false
+  },
+  "tracker_options": {
+    "recovery_gap": 8,
+    "ambiguity_margin": 0.15,
+    "initial_velocity": null
+  },
+  "box_conversion": "Round xyxy endpoints, then subtract to form positive in-bounds integer xywh, identically for both models.",
+  "training_protocol_sha256": "e2463685a8e455f01e63e36e8eb094828b16e9de6e465d1a1cbb514af0f2b507",
+  "training_dataset_sha256": "9d28e17dbbd6ffa6369ab20adbe61c01a564361756d5ec85590d31b8e1d39aa5",
+  "synthetic_sequences": [
+    28,
+    29,
+    30,
+    31
+  ],
+  "conveyor_ids": [
+    "G01_cap",
+    "G02_cap",
+    "G03_cap"
+  ],
+  "comparison": "From-scratch native dense cap model versus fixed train12, identical truth and scoring; model family and scores differ.",
+  "stopping": "One frozen evaluation per completed checkpoint; failures retained, no threshold retries on test results.",
+  "baseline_weights_sha256": "3d00e22652f60e896bd6046f2a71331dffecae1eaaa8cde7622aa7ca39881304",
+  "inference": {
+    "imgsz": 640,
+    "confidence": 0.25,
+    "iou_nms": 0.5,
+    "mask_threshold": 0.5,
+    "half": false,
+    "rect": true,
+    "lane_xyxy": [
+      139.5,
+      0,
+      205,
+      480
+    ],
+    "tracker": "v4 revision04, unchanged common/options",
+    "retina_masks": true,
+    "mask_threshold_definition": "Dense foreground uses native probability>=0.5 and8-connected components with at least9predictedpixels. Component score is mean foreground probability. Original truth is unchanged."
+  },
+  "runtime": {
+    "torch": "2.10.0+cu130",
+    "ultralytics": "8.3.235",
+    "ultralytics_nms_sha256": "cefd6b3b3305e9653c29d938d55ccd7f51f510cb7fbd91dc6c315b8379a7376a",
+    "torchvision_extension_sha256": "be5c5a4927862c7f94cde0e0128a6c881810516f48d5a6f42e72dbd8580d585a",
+    "ultralytics_ops_sha256": "440c88484ad2097616a57880bd1e355e77f6b08a97c82c3214341fdcae5b9857"
+  },
+  "limits": [
+    "Training and selection synthetic only; all five real videos previously exposed and used only for repeat validation.",
+    "Real box and trajectory labels are assistant-authored drafts, not independently reviewed. Real pixel-mask accuracy is unavailable.",
+    "Masks target visible vial caps, not whole hidden vials. Capture labels require at least9visible pixels.",
+    "Fresh synthetic test320frames/four appearance seeds from the same twin geometry; this is not evidence of physical reliability.",
+    "Box scores use maximum-cardinality one-to-one IoU>=0.5. Mask scores report0.5/0.75/0.9 at fixed detector confidence0.25; no maskAP is claimed.",
+    "Tracking is scored separately; low switches do not cancel missed vials or fragmented identities. IDs are camera-local, quality and removal unassessed.",
+    "Synthetic development-only package. No reserved capture or real evaluation is authorized by passing this package alone; absolute IDs and mask/detector gates must pass first.",
+    "Dense model retains8-connected components with at least9predictedpixels; alloriginaltruth remains scored. Score is mean foreground probability and uncalibrated. No NMS on disjoint masks.",
+    "Dense family final real/reserved evaluation requires separate passing development gate; this package has no real artifacts."
+  ],
+  "real_detection_scope": "45 fixed frames; truth and predictions both inclusive center-filtered to existing conveyor lane; IoU0.5 maximum-cardinality matching; primary includes uncertain labels; sensitivity excludes whole frames containing any uncertainty.",
+  "real_tracking_scope": "Full-video inference, no resets between windows. Draft trajectory point/ID scoring in existing ROI[140,32,200,455], IoU0.5, reference y100 tolerance15frames. No interpolation. Existing evaluator semantics unchanged.",
+  "dense_detection_scope": "Same draft trajectory ROI[140,32,200,455] and gap exclusion as identity scorer, IoU0.5 matching before association. Report detection recall separately from identity coverage.",
+  "revision": 1,
+  "created_utc": "2026-10-31T21:48:22.981726+00:00",
+  "hypothesis": "Run48 with the synthetic-derived confidence floor0.90 reaches real proxy precision0.81/recall0.74; its remaining misses are large bright caps resting inside the dark square holder at the inspection station (probability near zero), a size and context the renders never show. Run53 keeps the Run48 recipe and makes pasted caps scaled0.8..1.6x and, half the time, places them on a drawn dark square so 'large cap on dark holder' is a positive. No real input of any kind. Not proof of causation.",
+  "synthetic_role": "320 reserved TEST frames from four new appearance seeds after model freeze; no selection from outcomes. Same twin geometry limits independence. This test is not the previous stress/occlusion regression gate.",
+  "synthetic_exit_tolerance_frames": 1,
+  "synthetic_exit_matching": "Fixed birth ownership, paired truth ID, overlapping inclusive crossing intervals with at most one source-frame tolerance; missed and unmatched events cannot cancel.",
+  "tracker_source_sha256": "554efd6cd93fbb96724cc2c95a86746c7d92e727f4da3d124e730aecd90bbf23",
+  "training_capture_manifest_sha256": "31237f6cb28e80da67ce6762f97d64d6de22a4655309e1718c442dfbca685911",
+  "baseline_receipt_sha256": "ea3bc81eeedbe1477a4ca62667f15b4fa9e03f6decdc0e29e77aff651fbf269d",
+  "baseline_summary_sha256": {
+    "cap_seal/videos/cap_seal_video_1.mp4": "5d3e27e2fe18de982b290176adf5986a83925c4ac3f00d164f80f7ea0b2bd969",
+    "cap_seal/videos/cap_seal_video_2.mp4": "8b0a1bf7a45d88046a4c169436115c11741239cb024cf1dd61671a9e94d3ade4",
+    "cap_seal/videos/cap_seal_video_3.mp4": "f87f7e87ba43373e4ad51c3ca2fa0e257054acc6f1ddce4438747eb8970d1180",
+    "cap_seal/videos/cap_seal_video_4.mp4": "bc6020745dfaa21726b2af47f3161c6c528e0c34d90c67354c8de9a07d6f08d1",
+    "cap_seal/videos/cap_seal_video_5.mp4": "36dc1e755c92ee91b102ed4f78e903ae972914636db031c0142d544bb2a7821e"
+  },
+  "capture": {
+    "isaac_python": "/home/hackathon5/liamreporoot/isaacsim62-env/.venv/bin/python",
+    "twin": "/home/hackathon5/liamreporoot/msoe-ai-club-rockwell-automation-nvidia-hackath-liam-salas-s-team-98b842c559/external/external/csi_digital_twin_v1",
+    "kit_root": "/home/hackathon5/outputs/topdown-01a17f15-20261029/pilot04/kit"
+  },
+  "target_scope": "Clean authored identities G01_cap/G02_cap/G03_cap and every procedural stress identity. No membership based on predictions or instantaneous motion. Preserve all images and original split.",
+  "dense_family": "dense_cap_unet_v1",
+  "dense_training_root": "/home/hackathon5/outputs/topdown-01a17f15-20261029/dense53",
+  "dense_instances": {
+    "native_shape": [
+      480,
+      640
+    ],
+    "threshold": 0.5,
+    "connectivity": 8,
+    "minimum_area": 9,
+    "score": "mean foreground probability",
+    "morphology": false,
+    "position_filter": false
+  },
+  "development_gate": {
+    "root": "/home/hackathon5/outputs/topdown-01a17f15-20261029/dense-development53",
+    "protocol_sha256": "3775f7fd08182175126c4b7613cc58e91130e86d58550d92960ed782efef8537",
+    "evaluation_package_sha256": "2f2f2f4127c4fb74f0bc1b7a7105247d3dcef4fb3da84f663493d0b8e9c0c83f",
+    "candidate_name": "dense53",
+    "sequences": {
+      "clean": [
+        24,
+        25,
+        26,
+        27
+      ],
+      "stress": [
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34,
+        35
+      ]
+    }
+  },
+  "development_gate_relaxation": "Synthetic comparison and stable-ID gates recorded in the receipt, not required: the candidate is trained for real transfer.",
+  "dense_component_confidence_floor": {
+    "value": 0.9,
+    "rule": "1st percentile of true-cap component confidence on synthetic VAL (1280 frames), rounded down to 0.05; fixed before any real scoring",
+    "synthetic_val_tp_confidence_p1": 0.9436,
+    "source": "conf_analysis.py on dense53 synthetic VAL",
+    "real_inputs_used": false
+  },
+  "real_role": "Previously exposed repeat validation of all five real cap_seal videos with assistant-authored draft labels; no training, selection or tuning on real data. Augmentation-trained candidate with a component confidence floor from synthetic VAL."
+}

@@ -1,0 +1,282 @@
+{
+  "name": "dense53",
+  "family": "dense_cap_unet_v1",
+  "initialization": "random",
+  "real_inputs_used": false,
+  "dataset": "/home/hackathon5/outputs/topdown-01a17f15-20261029/edge28/dataset02",
+  "dataset_sha256": "9d28e17dbbd6ffa6369ab20adbe61c01a564361756d5ec85590d31b8e1d39aa5",
+  "torch_version": "2.10.0+cu130",
+  "seed": 20261031,
+  "batch": 8,
+  "epochs": 12,
+  "patience": 4,
+  "budget_seconds": 2400,
+  "external_budget_seconds": 2550,
+  "source_sha256": {
+    "check_epoch_schedule.py": "03aa28ef23fa5938f22a64386acfc82914fc1d44be577be5358160c5b37d1c3b",
+    "check_instance_balanced_loss.py": "82c4321cb074efaed81707ace3a38f1aaa5eb8c09707c5f331a7f968ab7a83dc",
+    "dense_validation_metrics.py": "003951b6aed654acf22c30b057b9704a346d525f9cc9c608601369bc14c97491",
+    "epoch_schedule.py": "7b4d1e66e980d8cbda3c3d097d406fc663c1b6eb065f6dcf0891c82565dbcfa8",
+    "instance_balanced_loss.py": "56da5aec2521d1f4c08135543ef9fbb2c87ea91980ab08edd6ec5a767c0d83c8",
+    "launch_dense_training.py": "d7caa698172a2d3e98af007595aaf4be12c2a9825e8a74972079a1aac699e3b6",
+    "preflight_dense_segmenter.py": "b46c3877bfe6b9884e39800a2c36e9f45f455231b2ff7c35c5e91d46317f7ee0",
+    "score_instance_masks.py": "d341bcfe6a77262362632be0e7e3f6c1de3fc1109ea7ef8324f9417e661035d3",
+    "topdown_dense_segmenter.py": "73c5f328af04a94dfdb0de0ce565ece4aeeac1e81bc64767d7b375a58ed9b7af",
+    "train_topdown_dense.py": "765aede345a12012155d9f931a006d0b98de0c6a33e5e91e3683a0a33e20be18"
+  },
+  "cpu_proof_sha256": "71ce281e5177fe3691c39859364e2a159279733e0d75faa5652051b74f4327a5",
+  "selection": "Maximum mean per-frame foreground Dice after fixed threshold0.5/8-connected minimum9-pixel component processing across all1280syntheticVAL frames; empty/empty=1, latest equal maximum wins. Raw unfiltered epoch metrics also retained, not used for selection. Primary filtered Dice also controls patience4 stopping; this is the unchanged selection and stopping rule inherited from32. Raw metrics and tiny-object diagnostics cannot select weights.",
+  "hypothesis": "Run48 with the synthetic-derived confidence floor0.90 reaches real proxy precision0.81/recall0.74; its remaining misses are large bright caps resting inside the dark square holder at the inspection station (probability near zero), a size and context the renders never show. Run53 keeps the Run48 recipe and makes pasted caps scaled0.8..1.6x and, half the time, places them on a drawn dark square so 'large cap on dark holder' is a positive. No real input of any kind. Not proof of causation.",
+  "falsifier": "Real improvement versus frozen41 requires higher trajectory-scoped detection recall on the five real cap_seal videos at no lower precision, and no new identity switches or merges. The real videos are evaluation-only (previously exposed, draft labels): never training, checkpoint selection, threshold or tracker tuning. Checkpoint selection stays on synthetic VAL.",
+  "objective": {
+    "bce_positive_weight": 50,
+    "soft_batch_dice_weight": 1,
+    "foreground_area_weighting": {
+      "mean_area_numerator": 1516686,
+      "mean_area_denominator": 4585,
+      "mean_area_source": "complete TRAIN instance observations only",
+      "rule": "mean_TRAIN_area / per_instance_area",
+      "background_weight": 1,
+      "weight_dtype": "float32",
+      "bce_reduction": "sum of weighted element BCE / B*H*W; never divide by weight sum",
+      "global_dice": "unchanged, batch global, smoothing1",
+      "arithmetic": "Original reduced BCE plus mean(50*target*(weight-1)*softplus(-logit)); preserve exact background/unit-weight gradients"
+    }
+  },
+  "augmentation": {
+    "horizontal_flip": 0.5,
+    "gamma_probability": 0.5,
+    "gamma_loguniform": [
+      0.4,
+      2.2
+    ],
+    "channel_gain_uniform": [
+      0.8,
+      1.2
+    ],
+    "geometric_crop": false,
+    "photometric_domain_randomisation": {
+      "hsv_probability": 0.5,
+      "hue_shift_max": 10,
+      "saturation_scale": [
+        0.6,
+        1.4
+      ],
+      "blur_probability": 0.5,
+      "blur_sigma": [
+        0.3,
+        1.5
+      ],
+      "downsample_probability": 0.3,
+      "downsample_factor": [
+        1.2,
+        2.0
+      ],
+      "noise_probability": 0.3,
+      "noise_sigma": [
+        2.0,
+        8.0
+      ],
+      "jpeg_probability": 0.3,
+      "jpeg_quality": [
+        30,
+        80
+      ]
+    },
+    "masks_untouched": true,
+    "structural_negatives": {
+      "vertical_flip": 0.5,
+      "paste_probability": 0.5,
+      "patches": [
+        1,
+        3
+      ],
+      "patch_size": [
+        20,
+        64
+      ],
+      "lane_x": [
+        120,
+        224
+      ],
+      "source_x_exclusion": [
+        100,
+        244
+      ],
+      "blend": "hard",
+      "masks_untouched": true
+    },
+    "vertical_flip": 0.5,
+    "procedural_negatives": {
+      "probability": 0.6,
+      "strokes": [
+        1,
+        4
+      ],
+      "stroke_thickness": [
+        2,
+        7
+      ],
+      "stroke_points": [
+        3,
+        6
+      ],
+      "stroke_span": [
+        30,
+        120
+      ],
+      "rectangles": [
+        0,
+        2
+      ],
+      "rectangle_size": [
+        20,
+        80
+      ],
+      "lane_x": [
+        120,
+        224
+      ],
+      "stroke_value": [
+        0,
+        70
+      ],
+      "rectangle_value": [
+        150,
+        235
+      ],
+      "masks_untouched": true
+    },
+    "cap_copy_paste": {
+      "probability": 0.7,
+      "copies": [
+        1,
+        3
+      ],
+      "lane_x": [
+        120,
+        224
+      ],
+      "source": "same_frame_instances",
+      "masks_updated": true,
+      "scaled_paste": {
+        "scale": [
+          0.8,
+          1.6
+        ],
+        "holder_probability": 0.5,
+        "holder_size_factor": [
+          1.4,
+          2.2
+        ],
+        "holder_value": [
+          15,
+          75
+        ],
+        "holder_shape": "square"
+      }
+    }
+  },
+  "instances": {
+    "native_shape": [
+      480,
+      640
+    ],
+    "threshold": 0.5,
+    "connectivity": 8,
+    "minimum_area": 9,
+    "score": "mean foreground probability",
+    "morphology": false,
+    "position_filter": false
+  },
+  "limits": [
+    "Full native image includes rack/background negatives. Every discrete synthetic instance label is retained through the horizontal flip for TRAIN weight computation; all original truth remains unchanged for scoring.",
+    "Touching caps can merge at inference; original instance detection/mask/ID gates still apply.",
+    "Synthetic adaptive development only. No real or reserved inputs, pretrained model or warmstart.",
+    "Three correlated trajectories/appearance seeds are not720independent scenes. Fast interior motion is kinematic coverage, not physical conveyor timing.",
+    "Every completed epoch checkpoint and hash retained atomically. Only original filtered-best Dice selects weights and controls patience4; raw-best and tiny diagnostics cannot select.",
+    "Full per-frame raw/filtered mask diagnostics retained. Original target objects and pixels are never discarded.",
+    "Coefficient mass is preserved over the complete TRAIN population, not actual loss/gradients or individual batches. Partial epochs do not inherit complete-population conservation.",
+    "Weights equalize correlated observations, not scenes.58/70 tiny observations come from three trajectories.",
+    "Observed TRAIN areas10..387 yield multipliers0.8547623..33.0793021; increased variance/false positives are possible.",
+    "Original reduced BCE plus foreground-only correction preserves the original background/unit-weight gradient path. Full batch Dice is unchanged.",
+    "No EMA, tracker03, architecture change, new data or real/reserved inputs. Same seed is not independent replication.",
+    "Endpoint0.00003 is reached only if nominal epoch11 begins; unchanged patience/time limits can stop sooner. Log each applied learning rate, including any partial epoch.",
+    "Lower late loss or better exposed syntheticVAL cannot prove absence of overfitting or physical reliability.",
+    "12epoch/patience4 retained; internal budget 2400s and external 2550s plus20grace replace the1200/1350 limits because each epoch costs more. No extension after results.",
+    "More parameters on three correlated trajectories can also overfit appearance seeds; exposed synthetic VAL cannot distinguish that from better discrimination.",
+    "Augmentation draws use the per-sample RNG after the original flip/gamma/gain draws, so the flip decision for (seed, epoch, index) is identical to41.",
+    "Pasted patches come from the synthetic frame itself, so they teach lane-texture invariance, not the real fixtures' appearance.",
+    "Procedural shapes are a caricature of cables and panels; they cannot reproduce real specularity or motion blur.",
+    "Photometric randomisation, structural negatives, procedural negatives, vertical flip and cap copy-paste all change versus41; attribution needs45/46/47's real results.",
+    "Pasted caps are exact copies of caps already in the frame (same appearance and size); they add position and context diversity, not appearance diversity."
+  ],
+  "dataset_counts": {
+    "train": 5160,
+    "val": 1280
+  },
+  "comparison_control": "Frozen41 selected epoch9 (width12, cosine3e-4->3e-5, budget2400). Same seed/data/loss/width/AdamW/selection/tracker; only training augmentation changes. Start from random weights, never warmstart41.",
+  "parent_dataset_sha256": "bb8dae4c644a6335feeb1dee68c0ef86cfe75241bc5e196018b8b22dad0826d0",
+  "data_preparation": {
+    "build_protocol_sha256": "8c5ec1c3fd7d408673b5419aa8cb110e07d9f07e5d742a6e46facd469e8de990",
+    "build_receipt_sha256": "32695787dc3beb585eeccc42403ae39a47a1cbee63dfc126c613fcf456721ac2",
+    "preservation_audit_sha256": "3f003db8e6a7d9d0f8642fcf68e76093b8138765344ede20c3968069dd3625c4",
+    "metadata_errata": {
+      "left01": "11ef4b623b8ccb31b5963442c58e3802378901f36868f3425fcd73530cda059a",
+      "right01": "b13039e2efc68d48d52c2a2b732e92801e18dba558702b6222085eed66d03622"
+    }
+  },
+  "optimizer": {
+    "name": "AdamW",
+    "learning_rate": 0.0003,
+    "weight_decay": 0.0005,
+    "schedule": {
+      "name": "epoch_cosine",
+      "minimum_learning_rate": 3e-05,
+      "nominal_epochs": 12,
+      "formula": "min_lr+(base_lr-min_lr)*(1+cos(pi*epoch/(nominal_epochs-1)))/2",
+      "application": "Set every optimizer group at the start of each epoch; preserve AdamW state. No warmup or restarts."
+    }
+  },
+  "descriptive_control": {
+    "name": "dense38",
+    "weights_sha256": "be202e17f73b1ba5c75eac50af83c72e29b81168e424676d7c463e5ad06172a4",
+    "report_sha256": "e9a4f7c8a460a965e978ce1610364eaa78b396df84a189ac642a540dd9b5892e",
+    "validation_filtered_counts": {
+      "TP": 1001,
+      "FP": 8,
+      "FN": 5
+    },
+    "development_lane_counts": {
+      "clean": {
+        "TP": 384,
+        "FP": 4,
+        "FN": 2
+      },
+      "stress": {
+        "TP": 618,
+        "FP": 3,
+        "FN": 2
+      }
+    },
+    "correctly_owned_points": 997,
+    "identity_theft_points": 5,
+    "selection_allowed": false
+  },
+  "architecture": {
+    "family": "dense_cap_unet_v1",
+    "base_width": 12,
+    "widths": [
+      12,
+      24,
+      48,
+      96
+    ],
+    "groupnorm_groups": 2,
+    "conv3x3_padding_mode": "zeros"
+  },
+  "lineage": {
+    "parent": "dense48 recipe",
+    "purpose": "recall on stationary caps in dark holders without real training data"
+  }
+}

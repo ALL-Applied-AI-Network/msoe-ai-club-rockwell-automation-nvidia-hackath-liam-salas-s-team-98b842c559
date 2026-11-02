@@ -23,6 +23,8 @@ Read [AGENTS.md](../AGENTS.md) for shared operating policy.
 | [WP6 model comparison](wp6-model-comparison.md) | Reading the no-run RCA-bench record and DP4 guarded-template fallback |
 | [Twin](twin.md) | Making variants or assessing rendering limits |
 | [Tank station](tank-station.md) | Building and rendering the optional four-tank USD assembly |
+| [Top-down cap segmenter](topdown-cap-segmenter.md) | Running the synthetic-trained top-down cap detector and interpreting its exposed-validation evidence |
+| [Top-down iteration log](topdown-iteration-log.md) | Tracing the detector experiments, diagnostics and negative results |
 | [Operations](operations.md) | Configuring inputs, credentials, outputs and compute shutdown |
 | [Skills](skills.md) | Choosing workflows and checking host discovery |
 | [Glossary](glossary.md) | Looking up terminology |

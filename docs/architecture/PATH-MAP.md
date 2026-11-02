@@ -2,6 +2,24 @@
 
 | Old path | New path |
 |---|---|
+| `scripts/topdown/conf_analysis.py` | `cli/fluidmix/core/topdown/conf_analysis.py` |
+| `scripts/topdown/continuation_rule_sim.py` | `cli/fluidmix/core/topdown/continuation_rule_sim.py` |
+| `scripts/topdown/demo_overlay.py` | `cli/fluidmix/core/topdown/demo_overlay.py` |
+| `scripts/topdown/dense_validation_metrics.py` | `cli/fluidmix/core/topdown/dense_validation_metrics.py` |
+| `scripts/topdown/epoch_schedule.py` | `cli/fluidmix/core/topdown/epoch_schedule.py` |
+| `scripts/topdown/exit_miss_causes.py` | `cli/fluidmix/core/topdown/exit_miss_causes.py` |
+| `scripts/topdown/instance_balanced_loss.py` | `cli/fluidmix/core/topdown/instance_balanced_loss.py` |
+| `scripts/topdown/raw_components_infer.py` | `cli/fluidmix/core/topdown/raw_components_infer.py` |
+| `scripts/topdown/real_proxy.py` | `cli/fluidmix/core/topdown/real_proxy.py` |
+| `scripts/topdown/rebirth_tracker_sim.py` | `cli/fluidmix/core/topdown/rebirth_tracker_sim.py` |
+| `scripts/topdown/rescore_reviewed.py` | `cli/fluidmix/core/topdown/rescore_reviewed.py` |
+| `scripts/topdown/review_items.py` | `cli/fluidmix/core/topdown/review_items.py` |
+| `scripts/topdown/run_topdown_segmenter.py` | `cli/fluidmix/core/topdown/run_topdown_segmenter.py` |
+| `scripts/topdown/score_instance_masks.py` | `cli/fluidmix/core/topdown/score_instance_masks.py` |
+| `scripts/topdown/topdown_dense_segmenter.py` | `src/fluidmix/topdown/segmenter.py` |
+| `scripts/topdown/tracker_gap_sim.py` | `cli/fluidmix/core/topdown/tracker_gap_sim.py` |
+| `scripts/topdown/train_topdown_dense.py` | `cli/fluidmix/core/topdown/train_topdown_dense.py` |
+| `tests/test_topdown_tracker.py` | `tests/fluidmix/topdown/test_tracker.py` |
 | `scripts/aggregate_wp7_vlm_attempts.py` | `cli/fluidmix/explanation/vlm/aggregate_wp7_vlm_attempts.py` |
 | `scripts/align_still_labels.py` | `cli/fluidmix/core/align_still_labels.py` |
 | `scripts/audit_cnn_holdout_recovery.py` | `cli/fluidmix/perception/cnn/audit_cnn_holdout_recovery.py` |

@@ -1,0 +1,37 @@
+{
+  "name": "dense53",
+  "family": "dense_cap_unet_v1",
+  "task": "segment",
+  "initialization": "random",
+  "pretrained": false,
+  "real_inputs_used": false,
+  "pretraining_origin": "synthetic_only",
+  "weights": "/home/hackathon5/outputs/topdown-01a17f15-20261029/dense53/train01/best.pt",
+  "weights_sha256": "723160b47170026ddd2ef3319bad54dea4d9239fa35fd95af13fac78884734e8",
+  "initial_weights_sha256": "c0acb7584403b502ad7a9c8dc87718973559d486b2272ef9a8b1e719eb027f1c",
+  "protocol_sha256": "e2463685a8e455f01e63e36e8eb094828b16e9de6e465d1a1cbb514af0f2b507",
+  "dataset_sha256": "9d28e17dbbd6ffa6369ab20adbe61c01a564361756d5ec85590d31b8e1d39aa5",
+  "source_sha256": {
+    "check_epoch_schedule.py": "03aa28ef23fa5938f22a64386acfc82914fc1d44be577be5358160c5b37d1c3b",
+    "check_instance_balanced_loss.py": "82c4321cb074efaed81707ace3a38f1aaa5eb8c09707c5f331a7f968ab7a83dc",
+    "dense_validation_metrics.py": "003951b6aed654acf22c30b057b9704a346d525f9cc9c608601369bc14c97491",
+    "epoch_schedule.py": "7b4d1e66e980d8cbda3c3d097d406fc663c1b6eb065f6dcf0891c82565dbcfa8",
+    "instance_balanced_loss.py": "56da5aec2521d1f4c08135543ef9fbb2c87ea91980ab08edd6ec5a767c0d83c8",
+    "launch_dense_training.py": "d7caa698172a2d3e98af007595aaf4be12c2a9825e8a74972079a1aac699e3b6",
+    "preflight_dense_segmenter.py": "b46c3877bfe6b9884e39800a2c36e9f45f455231b2ff7c35c5e91d46317f7ee0",
+    "score_instance_masks.py": "d341bcfe6a77262362632be0e7e3f6c1de3fc1109ea7ef8324f9417e661035d3",
+    "topdown_dense_segmenter.py": "73c5f328af04a94dfdb0de0ce565ece4aeeac1e81bc64767d7b375a58ed9b7af",
+    "train_topdown_dense.py": "765aede345a12012155d9f931a006d0b98de0c6a33e5e91e3683a0a33e20be18"
+  },
+  "selected_epoch": 4,
+  "selected_mean_frame_dice": 0.9505169251002371,
+  "completed_epochs": 9,
+  "stop": "patience",
+  "partial_epoch": false,
+  "changed_parameters": 58,
+  "elapsed_seconds": 601.2238491669996,
+  "limits": [
+    "Synthetic development selection only; original paired detector/mask/ID gates still required.",
+    "Semantic foreground components can merge touching caps; fixed minimum9 predicted pixels, all original truth retained."
+  ]
+}
