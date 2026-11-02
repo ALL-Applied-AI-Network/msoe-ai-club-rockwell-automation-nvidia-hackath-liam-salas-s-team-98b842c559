@@ -808,7 +808,11 @@ class DefaultProductionFactory:
         from fluidmix.perception.cnn.fill_level_adapter import (
             configured_weights, load_fill_level_model, predict_fill_level_pair,
         )
+        from fluidmix.perception.tracker.fill_step_production import (
+            load_pixel_to_metre_calibration,
+        )
         from fluidmix.pipeline.service.quick_fill import QuickFillPipelineAdapter
+        from fluidmix.storage.artifacts.fill_step_files import read_regular_file
 
         weights = configured_weights()
         if weights is None or weights.is_symlink() or not weights.is_file():
@@ -826,7 +830,11 @@ class DefaultProductionFactory:
                 model, current, reference, threshold=0.5, device=device,
             )
 
-        return QuickFillPipelineAdapter(predictor, context)
+        calibration = load_pixel_to_metre_calibration(
+            read_regular_file(CALIBRATION, "pixel calibration"),
+            expected_sha256=EXPECTED_HASHES[CALIBRATION],
+        )
+        return QuickFillPipelineAdapter(predictor, context, calibration)
 
 
 factory = DefaultProductionFactory()

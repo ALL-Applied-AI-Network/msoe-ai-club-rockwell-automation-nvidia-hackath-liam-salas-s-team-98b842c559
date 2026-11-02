@@ -14,6 +14,7 @@ export function SourcePanel({ model, operatorId, onOperatorId }: { readonly mode
   const [sessionId, setSessionId] = useState("");
   const [recipeId, setRecipeId] = useState("");
   const [trayId, setTrayId] = useState("");
+  const [dispensePlan, setDispensePlan] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const canStart = model.pinStatus === "verified" || model.pinStatus === "dev_override";
 
@@ -27,7 +28,12 @@ export function SourcePanel({ model, operatorId, onOperatorId }: { readonly mode
     }
     if (sourceType === "v4l2" && !/^\/dev\/video\d+$/.test(device)) { setLocalError("Device path must use /dev/videoN, for example /dev/video0."); return; }
     if (sourceType === "rtsp" && !/^rtsps?:\/\//i.test(rtspUrl)) { setLocalError("RTSP URL must begin with rtsp:// or rtsps://."); return; }
-    const runContext = { operator_run_id: operatorId, recipe_id: recipeId || null, tray_id: trayId };
+    const runContext = {
+      operator_run_id: operatorId,
+      recipe_id: recipeId || null,
+      tray_id: trayId,
+      ...(dispensePlan ? { dispense_plan: dispensePlan } : {}),
+    };
     const source: RunnerSource = sourceType === "video" ? { type: "video", file: file as File, runContext }
       : sourceType === "v4l2" ? { type: "v4l2", device, runContext } : { type: "rtsp", url: rtspUrl, runContext };
     await model.start(source);
@@ -53,6 +59,7 @@ export function SourcePanel({ model, operatorId, onOperatorId }: { readonly mode
         <label className="source-input">Operator run ID<input aria-label="Operator run ID" value={operatorId} required onChange={e => onOperatorId(e.currentTarget.value)} /></label>
         <label className="source-input">Tray ID<input aria-label="Tray ID" value={trayId} required onChange={e => setTrayId(e.currentTarget.value)} /></label>
         <label className="source-input">Recipe ID (optional)<input aria-label="Recipe ID (optional)" value={recipeId} onChange={e => setRecipeId(e.currentTarget.value)} /></label>
+        <label className="source-input">Dispense plan (optional)<textarea aria-label="Dispense plan (optional)" value={dispensePlan} placeholder={"T200:10>T400:10>T100:10 x3\nT200:30>T100:10 x3"} onChange={e => setDispensePlan(e.currentTarget.value)} /></label>
       </div>}
       {sourceType === "attach" && <label className="source-input">Session ID<input aria-label="Session ID" value={sessionId} required onChange={e => setSessionId(e.currentTarget.value.trim())} /></label>}
       {(sourceType === "video" || sourceType === "attach") && <label className="source-input">{sourceType === "attach" ? "Same video file (optional, for local playback)" : "Video file"}<input aria-label="Video file" type="file" accept="video/*,.avi" onChange={e => setFile(e.currentTarget.files?.[0] ?? null)} /></label>}

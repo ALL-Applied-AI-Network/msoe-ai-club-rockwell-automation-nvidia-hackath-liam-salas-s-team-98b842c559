@@ -5,6 +5,7 @@ export interface RunContext {
   readonly operator_run_id: string;
   readonly recipe_id: string | null;
   readonly tray_id: string;
+  readonly dispense_plan?: string;
 }
 
 export type RunnerSource =

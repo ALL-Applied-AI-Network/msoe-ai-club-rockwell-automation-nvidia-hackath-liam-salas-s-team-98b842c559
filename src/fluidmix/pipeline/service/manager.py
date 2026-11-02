@@ -646,21 +646,36 @@ class SessionManager:
         validate_runtime_payload(result)
         vial_id = str(result["vial_id"])
         vial_position = int(result["vial_position"])
+        cohort_size = int(result.get("cohort_size", 3))
+        if cohort_size <= 0:
+            raise ValueError("cohort size must be positive")
+        required_positions = set(range(1, cohort_size + 1))
         closed = result.get("closed") is True
         if closed and vial_position == 1:
+            if (
+                bool(getattr(adapter, "rule_only", False))
+                and session.vials and not session.cohort_finalized
+            ):
+                self._emit_abstention(
+                    session,
+                    str(result.get("boundary_reason") or "quick_fill_incomplete_cohort"),
+                )
             session.cohort_number += 1
             session.cohort_finalized = False
             session.vials.clear()
         position = self._position(result)
         tracker_payload = self._tracker_payload(result)
         measurement_payload = self._measurement_payload(result)
-        self._emit(session, "measuring", {
+        measuring_payload = {
             "position": position, "tracker": tracker_payload,
             "measurement": measurement_payload, "stage": "measuring",
-        })
+        }
+        if isinstance(result.get("source_time_s"), (int, float)):
+            measuring_payload["source_time_s"] = float(result["source_time_s"])
+        self._emit(session, "measuring", measuring_payload)
         if not closed:
             return
-        if vial_position in {2, 3} and (
+        if vial_position in (required_positions - {1}) and (
             not any(row.get("vial_position") == 1 for row in session.vials.values())
             or session.cohort_finalized
         ):
@@ -676,7 +691,7 @@ class SessionManager:
                 del session.vials[stored_id]
         session.vials[vial_id] = deepcopy(dict(result))
         positions = {row.get("vial_position"): key for key, row in session.vials.items()}
-        if set(positions) != {1, 2, 3}:
+        if set(positions) != required_positions:
             self._emit(session, "waiting_for_references", {
                 "position": position, "tracker": tracker_payload,
                 "missing_reference_types": ["clean_recipe"],
@@ -689,6 +704,7 @@ class SessionManager:
         target_vial_id = positions[1]
         target_result = session.vials[target_vial_id]
         target_position = self._position(target_result)
+        source_time_s = target_result.get("source_time_s")
         decide = getattr(adapter, "decide_cohort", None)
         if not callable(decide):
             raise RuntimeError("accepted adapter does not expose causal cohort decision")
@@ -701,14 +717,17 @@ class SessionManager:
                      "acknowledged_by": None}
             session.alarms[str(alarm["alarm_id"])] = alarm
         evidence_ids = list(deterministic.get("evidence_citations", []))
-        self._emit(session, "vial_decision", {
+        decision_payload = {
             "position": target_position, "disposition": disposition,
             "decision_id": f"decision-c{session.cohort_number}-{target_vial_id}",
             "alarm": alarm, "measurement": self._measurement_payload(target_result),
             "evidence_ids": evidence_ids,
             "unavailable_reason": ("deterministic_decision_unavailable"
                                    if disposition == "insufficient_evidence" else None),
-        })
+        }
+        if isinstance(source_time_s, (int, float)):
+            decision_payload["source_time_s"] = float(source_time_s)
+        self._emit(session, "vial_decision", decision_payload)
         deterministic_row = {
             "type": "deterministic", "vial_id": target_vial_id, **deterministic,
         }
@@ -768,7 +787,7 @@ class SessionManager:
                 *(item for item in evidence if isinstance(item, str) and item),
                 *(item for item in images if isinstance(item, str) and item),
             ]))
-            self._emit(session, "model_vote", {
+            model_payload = {
                 "position": target_position, "vote_id": vote_id,
                 "model": {"model_id": repository, "revision": revision,
                           "role": "vlm", "source": "inferred"},
@@ -779,7 +798,10 @@ class SessionManager:
                 "confidence": float(confidence) if admitted and confidence_valid else None,
                 "evidence_ids": citations,
                 "unavailable_reason": None if admitted else "model_vote_unavailable",
-            })
+            }
+            if isinstance(source_time_s, (int, float)):
+                model_payload["source_time_s"] = float(source_time_s)
+            self._emit(session, "model_vote", model_payload)
             explanation = attempt.get("explanation")
             if admitted and isinstance(explanation, str) and explanation:
                 self._emit(session, "explanation", {
@@ -840,7 +862,7 @@ class SessionManager:
         unavailable = final_disposition == "insufficient_evidence"
         scores = ({"keep": 0.0, "check": 1.0, "discard": 0.0} if unavailable
                   else {"keep": 1.0 - discard, "check": 0.0, "discard": discard})
-        self._emit(session, "averaged_decision", {
+        averaged_payload = {
             "position": target_position,
             "decision_id": f"final-c{session.cohort_number}-{target_vial_id}",
             "method": "equal_weight", "admitted_vote_ids": all_vote_ids,
@@ -849,8 +871,11 @@ class SessionManager:
             "evidence_ids": list(det.get("evidence_citations", [])),
             "unavailable_reason": ("fewer_than_two_valid_votes"
                                    if final_disposition == "insufficient_evidence" else None),
-        })
-        self._emit(session, "explanation", {
+        }
+        if isinstance(source_time_s, (int, float)):
+            averaged_payload["source_time_s"] = float(source_time_s)
+        self._emit(session, "averaged_decision", averaged_payload)
+        explanation_payload = {
             "position": target_position,
             "explanation_id": f"explanation-c{session.cohort_number}-{target_vial_id}",
             "plain_language": f"Final vial disposition: {final_disposition}.",
@@ -858,7 +883,10 @@ class SessionManager:
             "evidence_ids": list(det.get("evidence_citations", [])),
             "producer": {"model_id": "deterministic-template", "revision": "v1",
                          "source": "inferred"}, "unavailable_reason": None,
-        })
+        }
+        if isinstance(source_time_s, (int, float)):
+            explanation_payload["source_time_s"] = float(source_time_s)
+        self._emit(session, "explanation", explanation_payload)
 
     def _get(self, session_id: str) -> _Session:
         with self._lock:

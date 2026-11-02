@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -40,16 +41,25 @@ def validate_create_request(value: object, *, validate_video_path: bool = True) 
     if not isinstance(context, Mapping):
         raise ValueError("run_context must be an object")
     validate_runtime_payload(context)
-    if set(context) != {"operator_run_id", "recipe_id", "tray_id"}:
+    quick_fill = os.environ.get("FLUIDMIX_QUICK_FILL") == "1"
+    required_context = {"operator_run_id", "tray_id"}
+    if not quick_fill:
+        required_context.add("recipe_id")
+    if not required_context.issubset(context) or not set(context).issubset(
+        {"operator_run_id", "recipe_id", "tray_id", "dispense_plan"}
+    ):
         raise ValueError("operator run_context fields are not closed")
     if not isinstance(context.get("operator_run_id"), str) or not context["operator_run_id"]:
         raise ValueError("operator_run_id must be nonempty text")
-    if context.get("recipe_id") is not None and (
+    if "recipe_id" in context and context.get("recipe_id") is not None and (
         not isinstance(context["recipe_id"], str) or not context["recipe_id"]
     ):
         raise ValueError("recipe_id must be null or nonempty text")
     if not isinstance(context.get("tray_id"), str) or not context["tray_id"]:
         raise ValueError("tray_id must be nonempty text")
+    if "dispense_plan" in context:
+        from .quick_fill import parse_dispense_plan
+        parse_dispense_plan(context["dispense_plan"])
     if device not in {"cpu", "gpu", "auto"}:
         raise ValueError("device must be cpu, gpu, or auto")
     kind = str(source["kind"])
