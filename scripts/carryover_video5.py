@@ -65,6 +65,7 @@ def load_records():
             "window": [int(w["start_frame"]), int(w["end_frame"])] if eligible else None,
             "eligible": eligible, "exclusion_reason": w["exclusion_reason"] or None,
             "measured_lab": None, "measurement_noise_dE": None,
+            "measurement_error": None,
             "_window_row": {"vial": vial, "eligible": eligible,
                             "start_frame": int(w["start_frame"]), "end_frame": int(w["end_frame"])},
         }
@@ -83,6 +84,11 @@ def fmt_lab(v):
     return "null" if v is None else "[" + ", ".join(f"{x:.1f}" for x in v) + "]"
 
 
+def fmt_median(values, digits=1):
+    """An unavailable statistic stays explicit when no vial could be measured."""
+    return f"{np.median(values):.{digits}f}" if values else "n/a"
+
+
 def write_results(records, tau, out):
     decided = [r for r in records.values() if r["decision"] in ("keep", "discard")]
     lines = ["# Carryover decision, video 5 (measured)", "",
@@ -97,7 +103,7 @@ def write_results(records, tau, out):
              "Teledyne outputs are not in the dataset).", "",
              f"Primary rule: tau = **{tau:.2f}**, {TAU_TWIN_SOURCE}. Secondary rule for the record: tau = max(2.3, 3 * median noise) = **{frozen_tau([r.get('measurement_noise_dE') for r in records.values() if r.get('measured_lab') is not None]):.2f}**; it gives the same decisions on this video. "
              f"(median frame-to-frame noise over eligible vials = "
-             f"{np.median([r['measurement_noise_dE'] for r in records.values() if r['measured_lab'] is not None]):.3f}).",
+             f"{fmt_median([r['measurement_noise_dE'] for r in records.values() if r['measured_lab'] is not None], 3)}).",
              "", "## (a) Per-vial results", "",
              "| vial | recipe | prev | pos | measured Lab | noise dE | reference Lab | dE vs ref | tau | decision | known-colour check |",
              "|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -147,8 +153,10 @@ def write_results(records, tau, out):
     big_not_late = [v for v in big if departure[v] > last_sample]
     small_late = [v for v in measured_vials if gap[v] <= 2.0 and departure[v] <= last_sample]
     desc = lambda vs: ", ".join(f"vial {v} (gap {gap[v]:.1f}, cart moves {departure[v]} frames after the fill end)" for v in vs) or "none"
-    lines += ["", f"Median CIE76 between the two methods: {np.median(diffs):.1f}; max {max(diffs):.1f} "
-              f"(vial {measured_vials[int(np.argmax(diffs))]}).",
+    comparison = (f"Median CIE76 between the two methods: {np.median(diffs):.1f}; max {max(diffs):.1f} "
+                  f"(vial {measured_vials[int(np.argmax(diffs))]})." if diffs else
+                  "Comparison unavailable: no usable vial colour measurements.")
+    lines += ["", comparison,
               f"Gaps above 2.0: {desc(big)}.",
               f"The old method sampled single frames 15, 30 and {last_sample} after the fill end. For {desc(big_late)} the cart",
               f"started moving at or before the last sample, so a moving cart is a plausible cause of the gap (a hypothesis,",
@@ -156,18 +164,17 @@ def write_results(records, tau, out):
               f"The cart also moved at or before the last sample for {desc(small_late)}, whose gaps are small, so",
               "cart movement alone does not account for the gap sizes.", "",
               "## Flaws in the fixed rule seen after the run (reported, not corrected)", "",
-              "- The noise estimator collapsed. The per-frame colour is the median of integer pixels, so most",
-              "  consecutive-frame steps are exactly 0: zero-step fraction per vial, median over eligible vials = "
-              f"{np.median([r['diagnostics']['zero_step_fraction'] for r in records.values() if r['measured_lab'] is not None]):.2f}",
+              "- Within-window noise diagnostics: zero-step fraction per vial, median over measured vials = "
+              f"{fmt_median([r['diagnostics']['zero_step_fraction'] for r in records.values() if r['measured_lab'] is not None], 2)}",
               "  (within-window peak-to-peak L range, median over vials = "
-              f"{np.median([r['diagnostics']['window_lab_ptp'][0] for r in records.values() if r['measured_lab'] is not None]):.2f}).",
-              "  tau therefore fell to the floor 2.3, which measures frame-to-frame quantisation, not how much two",
-              "  settled vials of the same recipe differ from each other.",
+              f"{fmt_median([r['diagnostics']['window_lab_ptp'][0] for r in records.values() if r['measured_lab'] is not None], 2)}).",
+              "  Integer-pixel medians can produce zero consecutive-frame steps, so the secondary noise term can",
+              "  fall to its floor. It measures frame-to-frame quantisation, not between-vial spread.",
               "- With three vials per recipe, the leave-one-out reference of a position-2 vial is just the",
               "  position-3 vial and vice versa, so each pair gets the same dE and is flagged or kept together.",
               "  Settled same-recipe pairs differ by " + ", ".join(
                   f"{r['dE_vs_reference']:.1f}" for r in records.values() if r['position_in_run'] == 2 and r['dE_vs_reference'] is not None)
-              + " dE (positions 2 vs 3), so a threshold near 2.3 flags half of them; the position-1 vials differ by "
+              + " dE (positions 2 vs 3); the position-1 vials differ by "
               + ", ".join(f"{r['dE_vs_reference']:.1f}" for r in records.values()
                           if r['recipe_changed'] == 1 and r['dE_vs_reference'] is not None) + ".",
               "- Proposal (not applied): base tau on the between-vial spread of settled same-recipe vials from a",
@@ -192,6 +199,9 @@ def provenance_section(records, tau):
     old_pos2 = sorted(old[v] for v, r in records.items() if r["position_in_run"] == 2)
     old_pos1 = sorted(old[v] for v, r in records.items() if r["recipe_changed"] == 1 and r["position_in_run"] == 1)
     noises = [r["measurement_noise_dE"] for r in records.values() if r["measured_lab"] is not None]
+    noise_note = ([f"- The noise term is computed in-sample: 3 * median(measurement_noise_dE) over the {len(noises)} measured vials",
+                   f"  = {3 * float(np.median(noises)):.3f}; secondary tau = {frozen_tau(noises):.2f}."] if noises else
+                  ["- No usable vial measurements: the noise term is unavailable; secondary tau uses its floor 2.30."])
     return ["## (f) Provenance of the rule and tau (review response, 2026-11-01)", "",
             f"- Primary threshold (tau = {tau:.2f}): the CIE76 visibility boundary the team's twin pipeline froze on twin",
             "  renders before any real-video measurement (outputs/pipeline-20261028 PROGRESS.md: 'frozen CIE76 <= 2.0',",
@@ -205,8 +215,7 @@ def provenance_section(records, tau):
             "  so the ordering rests on the author's statement alone and cannot be checked from the repository",
             "  (docs/feasibility-protocol.md asks for a timestamped freeze). Earlier wording that the rule was",
             "  'frozen before any measurement was seen' and that 'nothing was tuned on video 5' has been withdrawn.",
-            f"- The noise term is computed in-sample: 3 * median(measurement_noise_dE) over the {len(noises)} scored vials",
-            f"  = {3 * float(np.median(noises)):.3f}, so the floor alone decided every vial under that rule (tau 2.30).",
+            *noise_note,
             "- The floor 2.3 and multiplier 3 were chosen by hand. 2.3 is the value commonly quoted as the CIE76",
             "  just-noticeable difference, but it is also exactly the median position-2 dE of these same vials under",
             "  the older method (data/video5_vial_colors.csv, column deltaE_vs_last_vial_of_recipe; docs/plan.md",
@@ -234,9 +243,8 @@ def main():
     records = load_records()
     measured = measure_vials(args.video, [r.pop("_window_row") for r in records.values()])
     for vial, m in measured.items():
-        records[vial]["measured_lab"] = m["measured_lab"]
-        records[vial]["measurement_noise_dE"] = m["measurement_noise_dE"]
-        records[vial]["diagnostics"] = m["diagnostics"]
+        for key in ("measured_lab", "measurement_noise_dE", "diagnostics", "measurement_error"):
+            records[vial][key] = m[key]
     tau = decide(records)  # twin-frozen 2.0 (primary)
     tau_noise = frozen_tau([r.get("measurement_noise_dE") for r in records.values() if r.get("measured_lab") is not None])
     records_noise = {v: dict(r) for v, r in records.items()}; decide(records_noise, tau=tau_noise)

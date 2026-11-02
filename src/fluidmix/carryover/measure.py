@@ -10,6 +10,8 @@ Assumed (chosen by eye earlier in the project, not fitted to any outcome): the c
 columns 180:420 contain the vial at the fill station; the liquid is the top 0.7 % most saturated
 pixels of that crop; sRGB camera values are close enough to sRGB for the Lab formula.
 """
+from numbers import Integral
+
 import numpy as np
 
 CROP_ROWS = slice(150, 430)
@@ -20,6 +22,10 @@ _RGB_TO_XYZ = np.array([[0.4124, 0.3576, 0.1805],
                         [0.2126, 0.7152, 0.0722],
                         [0.0193, 0.1192, 0.9505]])
 _D65 = np.array([0.95047, 1.0, 1.08883])
+
+
+class MeasurementError(ValueError):
+    """A vial window could not provide a usable colour measurement."""
 
 
 def lab(rgb):
@@ -39,12 +45,20 @@ def cie76(lab_a, lab_b):
 
 def liquid_rgb(frame_rgb):
     """Median RGB of the top 0.7 % most saturated pixels in the fill-station crop of one frame."""
-    pixels = np.asarray(frame_rgb, np.float32)[CROP_ROWS, CROP_COLS]
+    frame = np.asarray(frame_rgb)
+    if (frame.ndim != 3 or frame.shape[2] != 3 or frame.shape[0] < CROP_ROWS.stop
+            or frame.shape[1] < CROP_COLS.stop):
+        raise MeasurementError("frame does not contain the full RGB measurement crop")
+    pixels = frame[CROP_ROWS, CROP_COLS]
+    if (pixels.dtype.kind not in "uif" or not np.isfinite(pixels).all()
+            or (pixels < 0).any() or (pixels > 255).any()):
+        raise MeasurementError("measurement crop must contain finite RGB values in [0, 255]")
+    pixels = pixels.astype(np.float32)
     mx, mn = pixels.max(-1), pixels.min(-1)
     saturation = (mx - mn) / (mx + 1)
     mask = saturation > np.percentile(saturation, 100 - TOP_SATURATED_PERCENT)
     if not mask.any():
-        raise ValueError("no liquid pixels selected")
+        raise MeasurementError("no liquid pixels selected")
     return np.median(pixels[mask], 0)
 
 
@@ -52,19 +66,28 @@ def window_labs(cap, start_frame, end_frame):
     """Per-frame Lab for frames start_frame..end_frame inclusive (same frame index as the other
     two cameras of video 5). Frames are read sequentially after one seek so every frame counts."""
     import cv2
-    cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
+    if (any(not isinstance(f, Integral) or isinstance(f, (bool, np.bool_)) for f in (start_frame, end_frame))
+            or start_frame < 0 or end_frame < start_frame):
+        raise ValueError("window frames must be integers with 0 <= start_frame <= end_frame")
+    if not cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame):
+        raise MeasurementError(f"could not seek to frame {start_frame}")
     out = []
     for index in range(start_frame, end_frame + 1):
         ok, frame = cap.read()
-        if not ok:
-            raise ValueError(f"could not read frame {index}")
-        out.append(lab(liquid_rgb(frame[..., ::-1])))  # cv2 gives BGR
+        if not ok or frame is None:
+            raise MeasurementError(f"could not read frame {index}")
+        try:
+            out.append(lab(liquid_rgb(frame[..., ::-1])))  # cv2 gives BGR
+        except MeasurementError as exc:
+            raise MeasurementError(f"frame {index}: {exc}") from exc
     return np.array(out)
 
 
 def summarise_window(labs):
     """(median Lab over frames, median consecutive-frame CIE76). One frame gives noise 0.0."""
     labs = np.asarray(labs, np.float64)
+    if labs.ndim != 2 or labs.shape[1] != 3 or len(labs) == 0 or not np.isfinite(labs).all():
+        raise MeasurementError("window must contain finite three-channel Lab measurements")
     measured = np.median(labs, 0)
     if len(labs) < 2:
         return measured, 0.0
@@ -83,23 +106,34 @@ def window_diagnostics(labs):
 
 def measure_vials(video_path, windows):
     """windows: list of dicts with vial, eligible (bool), start_frame, end_frame.
-    Returns {vial: {measured_lab, measurement_noise_dE, window_frames}} for eligible vials."""
+    Returns a measurement or a null measurement with measurement_error for each eligible vial.
+    A failed window is discarded in full; later windows are still attempted. Unopenable
+    source files and programming/configuration errors remain fatal."""
     import cv2
     cap = cv2.VideoCapture(str(video_path))
-    if not cap.isOpened():
-        raise FileNotFoundError(video_path)
     result = {}
     try:
+        if not cap.isOpened():
+            raise FileNotFoundError(video_path)
         for w in windows:
             if not w["eligible"]:
                 continue
-            labs = window_labs(cap, w["start_frame"], w["end_frame"])
-            measured, noise = summarise_window(labs)
+            try:
+                labs = window_labs(cap, w["start_frame"], w["end_frame"])
+                measured, noise = summarise_window(labs)
+            except (MeasurementError, cv2.error) as exc:
+                result[w["vial"]] = {
+                    "measured_lab": None, "measurement_noise_dE": None,
+                    "window_frames": [], "diagnostics": None,
+                    "measurement_error": str(exc),
+                }
+                continue
             result[w["vial"]] = {
                 "measured_lab": [round(float(x), 2) for x in measured],
                 "measurement_noise_dE": round(noise, 3),
                 "window_frames": list(range(w["start_frame"], w["end_frame"] + 1)),
                 "diagnostics": window_diagnostics(labs),
+                "measurement_error": None,
             }
     finally:
         cap.release()

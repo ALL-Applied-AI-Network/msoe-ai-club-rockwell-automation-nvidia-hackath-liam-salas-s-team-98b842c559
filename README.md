@@ -14,10 +14,12 @@ decision, and no record of which vial was affected or why.
 
 ## What we built
 
-A fail-closed evidence pipeline that combines the three camera views with the programmed recipe and
-returns `keep`, `discard` or `insufficient_evidence` with the measurements behind it; anything it cannot
-support returns `insufficient_evidence`, and simulator masks or synthetic measurements are never passed
-off as plant truth. Its stages, and their state as of Nov 1, 2026:
+A colour-evidence pipeline that combines the three camera views with the programmed recipe and
+returns `keep`, `discard` or `insufficient_evidence` with the measurements behind it. Missing or invalid
+vial colour measurements and missing usable recipe references return `insufficient_evidence`; a failed
+vial window is recorded without stopping the remaining batch. An unopenable source video or invalid
+configuration still raises an error. Simulator masks or synthetic measurements are never passed off
+as plant truth. Its stages, and their state as of Nov 1, 2026:
 
 | stage | what it does | state |
 |---|---|---|
@@ -130,7 +132,7 @@ finds it there by default; elsewhere pass `--weights`), or the tracker output th
 
 ```bash
 pip install -r requirements-dev.txt   # includes opencv-python, matplotlib and torch (CPU wheels suffice)
-python -m pytest tests -q   # 120 of 121 pass; tests/test_tank_station.py::test_committed_asset_rebuilds_exactly fails on this host independently of these branches (a USD snapshot byte-compare)
+python -m pytest tests -q   # synthetic checks; see docs/quickstart.md for known host limitations
 python scripts/topdown/run_topdown_segmenter.py <dataset>/cap_seal/videos/cap_seal_video_5.mp4 --out outputs/carryover-video5/topdown   # Spark: tracker IDs, 720 to 833 s on the GB10
 python scripts/carryover_video5.py --dataset <dataset> --out outputs/carryover-video5   # decision on video 5: records.json + results.md
 python scripts/carryover_attribution.py                                             # attribution.md + attribution.png
