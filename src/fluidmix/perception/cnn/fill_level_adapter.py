@@ -86,7 +86,7 @@ def configured_weights() -> Path | None:
 
 def load_fill_level_model(path: str | Path, device: str) -> nn.Module:
     """Load a state dict, or a checkpoint dict holding one, into the U-Net."""
-    checkpoint = torch.load(Path(path), map_location="cpu", weights_only=False)
+    checkpoint = torch.load(Path(path), map_location="cpu", weights_only=True)
     if isinstance(checkpoint, nn.Module):
         model = checkpoint
     else:
