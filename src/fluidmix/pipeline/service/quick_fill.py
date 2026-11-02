@@ -270,8 +270,20 @@ class QuickFillCore:
         return vial
 
     def end_of_stream(self) -> tuple[Mapping[str, object], ...]:
+        results: list[Mapping[str, object]] = []
+        if (
+            not self._awaiting_reset
+            and self._last_candidate is not None
+            and self._last_height is not None
+            and self._last_height >= MIN_VISIBLE_HEIGHT_PX
+        ):
+            vial = self._record_vial(self._last_candidate)
+            self._last_candidate = None
+            results.append({"event": "vial_end", "vial": deepcopy(vial)})
         reason = self.eof_abstention_reason
-        return () if reason is None else ({"event": "abstention", "reason": reason},)
+        if reason is not None:
+            results.append({"event": "abstention", "reason": reason})
+        return tuple(results)
 
     @staticmethod
     def _sample_event(event: str, frame_index: int | None, elapsed_seconds: float,
@@ -372,7 +384,14 @@ class QuickFillPipelineAdapter:
         return tuple(results)
 
     def end_of_stream(self) -> tuple[Mapping[str, object], ...]:
-        return ()
+        results = []
+        for event in self.core.end_of_stream():
+            if event.get("event") != "vial_end":
+                continue
+            assignment = self._assign_vial(event["vial"])
+            if assignment is not None:
+                results.append(self._runtime_result(event["vial"], assignment))
+        return tuple(results)
 
     def decide_cohort(
         self, vials: Mapping[str, Mapping[str, object]],
