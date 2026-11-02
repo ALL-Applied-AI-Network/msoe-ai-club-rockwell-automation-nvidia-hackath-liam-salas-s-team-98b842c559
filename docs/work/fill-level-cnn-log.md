@@ -2,6 +2,60 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 10 pre-real-check freeze
+
+### Result
+
+- **Source-file observation:** immediately before freezing the Step 10 evaluator, Codex
+  reread the newest main-checkout review. It remains SHA-256 `ddfba000...71d1` and directs
+  the frozen model/rule through Step 10 without a fix after the failed calibration, then
+  requires a stop at the Step 10 checkpoint. Step 9 is already committed at `a2a1ee9`.
+- The evaluator is frozen for exactly the 27 approved vial windows: vials 2-9, 11-12 and
+  14-30, with vials 1 and 10 ineligible and calibration vial 13 excluded. The immutable
+  windows/recipe ledgers are `19174a4b...229` and `2157df0b...291`; they bind 1,470
+  inclusive settled frames, zones visible/edge/hidden `10/15/2`, and
+  transition/repeat `7/20`. The existing 0.3-second settled skip is validated from the
+  ledger and is not applied again.
+- The production script hash is `ec5a13bf...46e7d`, pure evaluator module hash
+  `9ea4802d...97431`, and test hash `ed408700...d10d`. Exact decoding seeks once per
+  window, verifies position and 640x480 uint8 geometry, explicitly copies BGR to RGB, and
+  preserves partial counts on failure. Per-vial aggregation requires at least three
+  decoded frames, uses a strict majority of all statuses, medians only the winning status,
+  and never converts a hidden range to a midpoint.
+- The ruler remains the pre-Step-9 hand-measured artifact `c1d2f112...41333`: 30 mL at
+  row 329 and 80 mL at row 177, or 3.04 rows/mL. It was not fit from the failed system
+  calibration. Results will retain each raw surface row or hidden row range, recipe volume,
+  frames used, status and error, plus the requested 1/2/5 mL and hidden-containment counts
+  overall and by zone and transition/repeat.
+- The script gates the exact video byte hash, model, weight, training summary, full
+  `holder_band_v2` rule and ruler before creating an output root or opening `VideoCapture`.
+  Evidence files use exclusive creation; fresh output roots cannot be reused; failures keep
+  their partial decoded/vial counts. The required failed-calibration, explicit-user-
+  continuation, hand-ruler and measured-untuned disclosures are embedded.
+- Relevant local tests pass: 102 passed, 1 skipped across training, ruler, surface-rule,
+  Step 9 and Step 10 evaluation. Python compilation, CLI parsing and `git diff --check`
+  pass. An independent read-only pre-access audit found no blocker and reproduced the
+  ruler endpoints and access design.
+- No real-check frame has been opened or decoded by this evaluator; no Step 10 production
+  attempt or output root exists yet. Brev remains running for the single fresh Step 10
+  attempt.
+
+### Commands run
+
+- Hash/read the newest main review and inspect the branch without changing the frozen
+  model, rule or ruler.
+- Validate the real-window and recipe ledgers against exact hard-coded hashes/spans;
+  exercise exact seek/decode behavior with synthetic in-memory frames only.
+- Run the focused and neighboring tests, Python compilation, CLI help and whitespace
+  checks; perform two independent read-only contract/code audits without opening the real
+  video.
+
+### Problems
+
+- None after pre-access hardening. Alternate caller-supplied hashes, duplicate or
+  out-of-span results, partial decode failures, unsupported statuses and non-finite rows
+  now have explicit regression coverage. No production scoring attempt has started.
+
 ## 2026-11-01 — Step 9 held-out twin test
 
 ### Result
