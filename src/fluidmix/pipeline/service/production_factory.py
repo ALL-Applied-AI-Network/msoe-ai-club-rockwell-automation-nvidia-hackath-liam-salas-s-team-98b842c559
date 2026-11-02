@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 
 import numpy as np
@@ -188,12 +189,17 @@ class FrozenTiming:
 
 def build_session_cohort(
     run_context: Mapping[str, object], *, frame_rate_hz: float,
+    cohort_ordinal: int = 1,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     """Create identities from operator input; no per-file case context is reused."""
     operator_run_id = str(run_context["operator_run_id"])
     tray_id = str(run_context["tray_id"])
     recipe_id = str(run_context["recipe_id"])
     cohort_id = f"{operator_run_id}:{tray_id}"
+    if os.environ.get("FLUIDMIX_ROLLING_COHORTS") == "1":
+        if type(cohort_ordinal) is not int or cohort_ordinal <= 0:
+            raise ProductionFactoryError("rolling cohort ordinal must be a positive integer")
+        cohort_id = f"{cohort_id}:cohort-{cohort_ordinal}"
     context: dict[str, object] = {
         "schema_version": "wp7-vlm-cohort-v1", "cohort_id": cohort_id,
         "partition": "production", "recipe_id": recipe_id,
@@ -632,6 +638,13 @@ class ProductionAdapterFactory:
     def for_session(self, request: Mapping[str, object], device: str):
         measurement_mode = measurement_mode_for_source(request.get("source"))
         validate_session_profile(request)
+        cohort_ordinal = 1
+        if os.environ.get("FLUIDMIX_ROLLING_COHORTS") == "1":
+            cohort_ordinal = request.get("_rolling_cohort_ordinal", 1)
+            if type(cohort_ordinal) is not int or cohort_ordinal <= 0:
+                raise ProductionFactoryError(
+                    "rolling cohort ordinal must be a positive integer"
+                )
 
         from fluidmix.perception.cnn.cnn_predictor import predict_pair
         from fluidmix.pipeline.rgb_runtime import load_frozen_cnn
@@ -683,7 +696,9 @@ class ProductionAdapterFactory:
                 fill_level_model, rgb, ref, threshold=0.5, device=device,
             )
         run_context = request["run_context"]
-        context, vial_templates = build_session_cohort(run_context, frame_rate_hz=10.0)
+        context, vial_templates = build_session_cohort(
+            run_context, frame_rate_hz=10.0, cohort_ordinal=cohort_ordinal,
+        )
 
         def tracker_builder(index: int, reference: np.ndarray):
             return IncrementalFillStepTracker(
