@@ -11,6 +11,29 @@ afterEach(() => {
 });
 
 describe("App", () => {
+  it("uses the same-origin runner route when no explicit backend URL is configured", async () => {
+    const fetcher = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "healthy",
+        service: "fluidmix-runner",
+        api_version: "1.0",
+        pipeline_commit: EXPECTED_COMMIT,
+        test_only: false,
+        inference: true,
+        active_sessions: 0,
+        limits: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const { App } = await import("./App");
+
+    render(<App />);
+
+    expect(await screen.findByText(/service verified/i)).toBeVisible();
+    expect(fetcher.mock.calls[0][0]).toBe("/api/health");
+  });
+
   it("loads service health using the canonical pipeline pin without fetching Phase 2 artifacts", async () => {
     vi.stubEnv("VITE_RUNNER_BASE_URL", "https://runner.example");
     const fetcher = vi.fn().mockResolvedValue({

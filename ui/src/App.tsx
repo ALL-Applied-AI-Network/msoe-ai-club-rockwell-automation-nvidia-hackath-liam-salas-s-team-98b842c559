@@ -8,7 +8,9 @@ const expectedPipelineCommit = pipelinePin.expected_pipeline_commit;
  * pin. The shell shows an "Unpinned development service" banner whenever it is used.
  */
 const devAllowedCommits = (import.meta.env.DEV ? import.meta.env.VITE_DEV_ALLOWED_COMMITS ?? "" : "").split(",").map((c: string) => c.trim()).filter((c: string) => /^[0-9a-f]{40}$/.test(c));
-const runnerClient = new HttpRunnerClient(import.meta.env.VITE_RUNNER_BASE_URL, [expectedPipelineCommit, ...devAllowedCommits]);
+// A relative base keeps browser traffic on the same forwarded origin. In development Vite proxies
+// /api to the runner on the GB10, so a remote browser does not need a second backend tunnel.
+const runnerClient = new HttpRunnerClient(import.meta.env.VITE_RUNNER_BASE_URL || "/", [expectedPipelineCommit, ...devAllowedCommits]);
 
 export function App() {
   return <AppShell client={runnerClient} expectedCommit={expectedPipelineCommit} devAllowedCommits={devAllowedCommits} />;
