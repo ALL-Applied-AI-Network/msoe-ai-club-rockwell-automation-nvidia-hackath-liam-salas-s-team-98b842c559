@@ -10,10 +10,10 @@ def test_vlm_freeze_exactly_pins_attempt19_onion_rebind():
 
     assert module.VLM_FREEZE.name == "freeze.json"
     assert module.VLM_FREEZE.parent.name == (
-        "wp7-vlm-development-freeze-01a18128-attempt19-onion-rebind"
+        "wp7-vlm-development-freeze-v13-submission-attempt02"
     )
     assert module.EXPECTED_HASHES[module.VLM_FREEZE] == (
-        "3d7468cd69e110115bdfe7847e8e578b2d1d4c0b105468fd7185c04c6bd040f8"
+        "b9cf76af4588812138090ced73221c823e9ff10406265a937168c23e1e362f33"
     )
     assert module.VLM_DECISION_SOURCE.name == "decision.py"
     assert module.VLM_DECISION_SOURCE.parent.name == "vlm"
