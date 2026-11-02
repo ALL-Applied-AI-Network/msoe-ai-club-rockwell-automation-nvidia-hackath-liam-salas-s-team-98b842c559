@@ -361,13 +361,26 @@ def test_session_tracker_uses_injected_frame_rate_for_elapsed_and_vlm_timestamps
     wrapper.configure_source_profile({"fps": 20.0, "resolution": [640, 480]})
     frame = np.zeros((2, 2, 3), dtype=np.uint8)
     wrapper.observe(frame, frame_index=0, elapsed_seconds=99.0)
+    wrapper.observe(frame, frame_index=1, elapsed_seconds=99.05)
     wrapper.observe(frame, frame_index=2, elapsed_seconds=99.1)
     closed = wrapper.close()
 
+    # 20 Hz is sampled every 2nd frame to the frozen 10 Hz rate: frame 1 is skipped,
+    # and sampled-frame indices convert to seconds at 10 Hz.
     assert observed == [(0, 0.0)]
     assert [row["timestamp_seconds"] for row in closed[0]["vlm_vial"]["stages"][0]["frames"]] == [
-        0.1, 0.2, 0.3,
+        0.2, 0.4, 0.6,
     ]
+
+
+@pytest.mark.parametrize(
+    ("fps", "stride"),
+    [(10.0, 1), (12.0, 1), (20.0, 2), (29.97, 3), (30.0, 3), (25.0, 1), (60.0, 6), (None, 1)],
+)
+def test_sampling_stride_reads_whole_multiples_of_10_hz_at_10_hz(fps, stride):
+    from fluidmix.pipeline.service.production_factory import sampling_stride
+
+    assert sampling_stride(fps) == stride
 
 
 @pytest.mark.parametrize("frame_rate_hz", [None, True, 0, -1, float("nan")])

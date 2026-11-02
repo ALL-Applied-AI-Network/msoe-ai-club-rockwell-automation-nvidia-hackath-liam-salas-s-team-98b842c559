@@ -136,6 +136,23 @@ def measurement_mode_for_source(source: object) -> str:
     return "generic_live"
 
 
+def sampling_stride(source_fps: object) -> int:
+    """Frames to step so a faster camera is read at the frozen 10 Hz tracker rate.
+
+    The tracker's frame-count settings were frozen on 10 Hz twin video. A camera at a
+    whole multiple of 10 Hz (for example 30 Hz) is sampled every n-th frame so those
+    settings keep their frozen meaning; other rates keep every frame and rely on
+    FrozenTiming's seconds-based scaling.
+    """
+    if isinstance(source_fps, bool) or not isinstance(source_fps, (int, float)):
+        return 1
+    fps = float(source_fps)
+    if not math.isfinite(fps) or fps < 15.0:
+        return 1
+    stride = round(fps / 10.0)
+    return stride if abs(fps / stride - 10.0) <= 0.5 else 1
+
+
 @dataclass(frozen=True)
 class FrozenTiming:
     """Time interpretation of frame counts frozen against the 10 Hz V4 route."""
@@ -284,6 +301,8 @@ class SessionVialTracker:
         self._seam_frames: list[tuple[np.ndarray, np.ndarray]] = []
         self._profile_evidence: dict[str, object] | None = None
         self._source_resolution: list[int] | None = None
+        self._sample_stride = 1
+        self._sample_phase = 0
         self._native_frames: dict[int, tuple[np.ndarray, dict[str, object]]] = {}
         self._window_hash = hashlib.sha256()
 
@@ -299,12 +318,19 @@ class SessionVialTracker:
             raise ProductionFactoryError(
                 "camera view is incompatible with frozen FillCam geometry"
             )
-        self._timing = FrozenTiming.for_source_fps(profile.get("fps"))
+        source_fps = profile.get("fps")
+        self._sample_stride = sampling_stride(source_fps)
+        sampled_fps = (
+            float(source_fps) / self._sample_stride if self._sample_stride > 1 else source_fps
+        )
+        self._timing = FrozenTiming.for_source_fps(sampled_fps)
         self._source_resolution = list(resolution)
         if self._profile_bound is not None:
             self._profile_bound(self._timing, profile)
         self._profile_evidence = {
             "fps": self._timing.source_fps,
+            "native_fps": source_fps,
+            "sample_stride": self._sample_stride,
             "fps_source": profile.get("fps_source", "injected_test_profile"),
             "resolution": list(resolution),
             "timing_conversions": {
@@ -353,6 +379,11 @@ class SessionVialTracker:
             # Direct unit callers retain an explicit, deterministic profile.
             self.configure_source_profile({"fps": 10.0, "resolution": [640, 480]})
         assert self._timing is not None
+        if self._sample_stride > 1:
+            keep = self._sample_phase == 0
+            self._sample_phase = (self._sample_phase + 1) % self._sample_stride
+            if not keep:
+                return ()
         if self._auto_close:
             native_rgb = normalize_tracker_frame(frame)
             if [native_rgb.shape[1], native_rgb.shape[0]] != self._source_resolution:
