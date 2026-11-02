@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 import hashlib
 import math
+import os
 import re
 import threading
 import time
@@ -162,6 +163,8 @@ class SessionManager:
     def _run(self, session: _Session, device: str) -> None:
         adapter, failure, desired = None, False, "completed"
         failure_code = "source_runtime_failed"
+        rolling = os.environ.get("FLUIDMIX_ROLLING_COHORTS") == "1"
+        cohort_ordinal = 1
         acquired = False
         while not session.stop.is_set():
             if self._model_lock.acquire(timeout=0.05):
@@ -174,11 +177,16 @@ class SessionManager:
         try:
             try:
                 session_factory = getattr(self._adapter_factory, "for_session", None)
-                adapter = (
-                    session_factory(session.request, device)
-                    if callable(session_factory)
-                    else self._adapter_factory(session.request["run_context"], device)
-                )
+
+                def create_adapter(ordinal: int):
+                    if callable(session_factory):
+                        request = session.request
+                        if rolling:
+                            request = {**session.request, "_rolling_cohort_ordinal": ordinal}
+                        return session_factory(request, device)
+                    return self._adapter_factory(session.request["run_context"], device)
+
+                adapter = create_adapter(cohort_ordinal)
                 boundary_plan = self._validated_boundary_plan(adapter)
                 with session.condition:
                     session.status = "running"
@@ -189,6 +197,11 @@ class SessionManager:
                 wall_started = time.monotonic()
                 first_source_elapsed: float | None = None
                 source_profile_configured = False
+                source_profile: Mapping[str, object] | None = None
+                pending_reference: tuple[object, float, int] | None = None
+                resync_previous: object | None = None
+                resync_motion_seen = False
+                resync_still_frames = 0
                 while True:
                     try:
                         source_item = next(iterator)
@@ -206,32 +219,96 @@ class SessionManager:
                     if not source_profile_configured:
                         profile_reader = getattr(self._frame_source, "profile", None)
                         configurator = getattr(adapter, "configure_source_profile", None)
+                        if callable(profile_reader):
+                            source_profile = profile_reader(session.stop)
                         if callable(profile_reader) and callable(configurator):
-                            profile = profile_reader(session.stop)
-                            if profile is None:
+                            if source_profile is None:
                                 raise RuntimeError("source stream profile is unavailable")
-                            configurator(profile)
+                            configurator(source_profile)
                         source_profile_configured = True
                     if first_source_elapsed is None:
                         first_source_elapsed = source_elapsed
-                    for result in adapter.process_frame(
-                        frame, frame_index=index, elapsed_seconds=float(elapsed)
-                    ):
-                        self._accept_result(session, adapter, result)
-                    if index in boundary_plan:
-                        checked_boundary = boundary_plan[index]
-                        observed_frame_sha256 = hashlib.sha256(
-                            memoryview(frame).cast("B")
-                        ).hexdigest()
-                        if observed_frame_sha256 != checked_boundary["frame_sha256"]:
-                            raise RuntimeError("vial boundary frame SHA-256 mismatch")
-                        closer = getattr(adapter, "close_tracker_vial", None)
-                        if not callable(closer):
-                            raise RuntimeError(
-                                "provenance-bound vial boundary requires tracker close"
+                    if resync_previous is not None:
+                        moving = self._vial_roi_motion(
+                            resync_previous, frame, source_profile
+                        )
+                        resync_previous = frame
+                        if not resync_motion_seen:
+                            resync_motion_seen = moving
+                        elif moving:
+                            resync_still_frames = 0
+                        else:
+                            resync_still_frames += 1
+                            if resync_still_frames >= self._resync_still_frame_count(
+                                source_profile
+                            ):
+                                pending_reference = (frame, source_elapsed, index)
+                                resync_previous = None
+                    elif adapter is None and pending_reference is not None:
+                        cohort_ordinal += 1
+                        adapter = create_adapter(cohort_ordinal)
+                        boundary_plan = self._validated_boundary_plan(adapter)
+                        configurator = getattr(adapter, "configure_source_profile", None)
+                        if callable(configurator):
+                            if source_profile is None:
+                                raise RuntimeError("source stream profile is unavailable")
+                            configurator(source_profile)
+                        reference_frame, reference_elapsed, reference_index = pending_reference
+                        pending_reference = None
+                        try:
+                            for result in adapter.process_frame(
+                                reference_frame, frame_index=reference_index,
+                                elapsed_seconds=reference_elapsed,
+                            ):
+                                self._accept_result(session, adapter, result)
+                            for result in adapter.process_frame(
+                                frame, frame_index=index, elapsed_seconds=source_elapsed
+                            ):
+                                self._accept_result(session, adapter, result)
+                        except Exception as error:
+                            reason = self._rolling_failure_code(error)
+                            if reason is None:
+                                raise
+                            self._emit_abstention(
+                                session, reason, rolling_cohort_ordinal=cohort_ordinal
                             )
-                        for result in closer(checked_boundary):
-                            self._accept_result(session, adapter, result)
+                            self._close_adapter(adapter)
+                            adapter = None
+                            resync_previous = frame
+                            resync_motion_seen = False
+                            resync_still_frames = 0
+                    elif adapter is not None:
+                        try:
+                            for result in adapter.process_frame(
+                                frame, frame_index=index, elapsed_seconds=source_elapsed
+                            ):
+                                self._accept_result(session, adapter, result)
+                            if index in boundary_plan:
+                                checked_boundary = boundary_plan[index]
+                                observed_frame_sha256 = hashlib.sha256(
+                                    memoryview(frame).cast("B")
+                                ).hexdigest()
+                                if observed_frame_sha256 != checked_boundary["frame_sha256"]:
+                                    raise RuntimeError("vial boundary frame SHA-256 mismatch")
+                                closer = getattr(adapter, "close_tracker_vial", None)
+                                if not callable(closer):
+                                    raise RuntimeError(
+                                        "provenance-bound vial boundary requires tracker close"
+                                    )
+                                for result in closer(checked_boundary):
+                                    self._accept_result(session, adapter, result)
+                        except Exception as error:
+                            reason = self._rolling_failure_code(error) if rolling else None
+                            if reason is None:
+                                raise
+                            self._emit_abstention(
+                                session, reason, rolling_cohort_ordinal=cohort_ordinal
+                            )
+                            self._close_adapter(adapter)
+                            adapter = None
+                            resync_previous = frame
+                            resync_motion_seen = False
+                            resync_still_frames = 0
                     session.frames_processed = index + 1
                     wall_delta = max(time.monotonic() - wall_started, 1e-9)
                     source_delta = source_elapsed - first_source_elapsed
@@ -244,9 +321,16 @@ class SessionManager:
                     session.last_rate = rate
                     self._emit(session, "rate_health", rate)
                     index += 1
-                    if bool(getattr(adapter, "session_complete", False)):
-                        break
-                if not session.stop.is_set() and not bool(
+                    if adapter is not None and bool(
+                        getattr(adapter, "session_complete", False)
+                    ):
+                        if not rolling:
+                            break
+                        self._close_adapter(adapter)
+                        adapter = None
+                        boundary_plan = {}
+                        pending_reference = (frame, source_elapsed, index - 1)
+                if adapter is not None and not session.stop.is_set() and not bool(
                     getattr(adapter, "session_complete", False)
                 ):
                     end_of_stream = getattr(adapter, "end_of_stream", None)
@@ -254,13 +338,15 @@ class SessionManager:
                         for result in end_of_stream():
                             self._accept_result(session, adapter, result)
                 if (
-                    not session.stop.is_set()
+                    adapter is not None
+                    and not session.stop.is_set()
                     and bool(getattr(adapter, "requires_complete", False))
                     and not bool(getattr(adapter, "session_complete", False))
                 ):
                     reason = getattr(adapter, "eof_abstention_reason", None)
                     self._emit_abstention(
-                        session, reason or "tracker_incomplete_or_disagreed"
+                        session, reason or "tracker_incomplete_or_disagreed",
+                        rolling_cohort_ordinal=(cohort_ordinal if rolling else None),
                     )
                 desired = "stopped" if session.stop.is_set() else "completed"
             except Exception as error:
@@ -269,7 +355,10 @@ class SessionManager:
                     failure = True
                     failure_code = "source_runtime_failed"
                 else:
-                    self._emit_abstention(session, failure_code)
+                    self._emit_abstention(
+                        session, failure_code,
+                        rolling_cohort_ordinal=(cohort_ordinal if rolling else None),
+                    )
                     desired = "completed"
             finally:
                 if adapter is not None and callable(getattr(adapter, "close", None)):
@@ -281,6 +370,56 @@ class SessionManager:
             self._model_lock.release()
         self._finish(session, "failed", error=failure_code) if failure else self._finish(session, desired)
         self._remove_owned_upload(session)
+
+    @staticmethod
+    def _close_adapter(adapter: object) -> None:
+        closer = getattr(adapter, "close", None)
+        if callable(closer):
+            closer()
+
+    @classmethod
+    def _rolling_failure_code(cls, error: Exception) -> str | None:
+        reason = cls._pipeline_failure_code(error)
+        if reason in {"tracker_stream_state_count_disagrees",
+                      "tracker_stream_order_disagrees"}:
+            return "unsupported_recipe_profile"
+        return reason
+
+    @staticmethod
+    def _resync_still_frame_count(profile: Mapping[str, object] | None) -> int:
+        if profile is None:
+            raise RuntimeError("source stream profile is unavailable")
+        fps = profile.get("fps")
+        if (
+            isinstance(fps, bool) or not isinstance(fps, (int, float))
+            or not math.isfinite(float(fps)) or float(fps) <= 0.0
+        ):
+            raise RuntimeError("source stream FPS is unavailable")
+        return max(1, math.ceil(float(fps) * 0.5))
+
+    @staticmethod
+    def _vial_roi_motion(previous: object, current: object,
+                         profile: Mapping[str, object] | None) -> bool:
+        if profile is None:
+            raise RuntimeError("source stream profile is unavailable")
+        resolution = profile.get("resolution")
+        if (
+            not isinstance(resolution, list) or len(resolution) != 2
+            or any(type(value) is not int or value <= 0 for value in resolution)
+        ):
+            raise RuntimeError("source stream profile is invalid")
+        import numpy as np
+        before, after = np.asarray(previous), np.asarray(current)
+        width, height = resolution
+        if before.shape != after.shape or before.shape[:2] != (height, width):
+            raise RuntimeError("camera view is incompatible with frozen FillCam geometry")
+        x0, y0 = math.floor(283 * width / 640), math.floor(194 * height / 480)
+        x1, y1 = math.ceil(338 * width / 640), math.ceil(417 * height / 480)
+        difference = np.abs(
+            after[y0:y1, x0:x1].astype(np.int16)
+            - before[y0:y1, x0:x1].astype(np.int16)
+        )
+        return float(np.mean(difference)) / 255.0 > 0.02
 
     @staticmethod
     def _pipeline_failure_code(error: Exception) -> str | None:
@@ -304,14 +443,21 @@ class SessionManager:
         }
         return mappings.get(str(error))
 
-    def _emit_abstention(self, session: _Session, reason_code: str) -> None:
+    def _emit_abstention(self, session: _Session, reason_code: str, *,
+                         rolling_cohort_ordinal: int | None = None) -> None:
+        placeholder_vial_id = "unavailable"
+        if rolling_cohort_ordinal is not None:
+            placeholder_vial_id = f"cohort-{rolling_cohort_ordinal}:unavailable"
         position = {
-            "tray_index": 0, "vial_number": "unavailable",
-            "slot_label": "unavailable",
+            "tray_index": 0, "vial_number": placeholder_vial_id,
+            "slot_label": placeholder_vial_id,
         }
+        decision_id = f"decision-abstain-{session.id}"
+        if rolling_cohort_ordinal is not None:
+            decision_id = f"{decision_id}-c{rolling_cohort_ordinal}"
         payload = {
             "position": position, "disposition": "insufficient_evidence",
-            "decision_id": f"decision-abstain-{session.id}", "alarm": None,
+            "decision_id": decision_id, "alarm": None,
             "measurement": {
                 "measurement_id": "measurement-unavailable",
                 "status": "unavailable", "rgb": None, "lab": None,
@@ -321,11 +467,14 @@ class SessionManager:
             "evidence_ids": [], "unavailable_reason": reason_code,
         }
         self._emit(session, "vial_decision", payload)
-        session.decisions.append({
-            "type": "abstention", "vial_id": "unavailable",
+        decision = {
+            "type": "abstention", "vial_id": placeholder_vial_id,
             "disposition": "insufficient_evidence",
             "limit_codes": [reason_code], "evidence_citations": [],
-        })
+        }
+        if rolling_cohort_ordinal is not None:
+            decision["cohort_ordinal"] = rolling_cohort_ordinal
+        session.decisions.append(decision)
 
     @staticmethod
     def _validate_vial_boundary(value: object) -> dict[str, object]:
