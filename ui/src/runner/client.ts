@@ -1,4 +1,5 @@
 import type { RunnerEvent } from "./contract";
+import { parseDecisionRecords, parseEvidenceBundle, type DecisionRecords, type EvidenceBundle } from "./evidence";
 
 export interface RunContext {
   readonly operator_run_id: string;
@@ -26,6 +27,27 @@ export interface RunnerHealth {
   readonly inference: boolean;
   readonly active_sessions: number;
   readonly limits: readonly string[];
+  /** Optional: the frozen source profile the runner accepts (fps, vial count, frames per vial). */
+  readonly frozen_profile?: FrozenProfile;
+  /** Optional: set only by the development replay tool. The UI must banner it as a recorded replay. */
+  readonly replay?: ReplayDisclosure;
+}
+
+export interface FrozenProfile {
+  readonly profile_id?: string;
+  readonly fps?: number | null;
+  readonly vial_count?: number | null;
+  readonly frames_per_vial?: number | null;
+  readonly resolution?: readonly number[];
+  readonly recipe_id?: string | null;
+}
+
+export interface ReplayDisclosure {
+  readonly recorded_session_id: string;
+  readonly recorded_service_commit: string;
+  readonly recorded_at: string;
+  readonly source_label: string;
+  readonly note: string;
 }
 
 export type SessionState = "created" | "running" | "stopping" | "completed" | "stopped" | "failed";
@@ -54,6 +76,12 @@ export interface RunnerClient {
     onDisconnect: (notice: StreamNotice) => void
   ): () => void;
   acknowledge(sessionId: string, alarmId: string, acknowledgedBy: string): Promise<void>;
+  /** Runner's decision receipts for a session (rule stages, model sources). */
+  getDecisions(sessionId: string): Promise<DecisionRecords>;
+  /** Optional evidence bundle; resolves `null` when the runner does not expose it (HTTP 404). */
+  getEvidenceBundle(sessionId: string): Promise<EvidenceBundle | null>;
+  /** URL of a crop image by ID; only meaningful when the evidence bundle is exposed. */
+  evidenceImageUrl(sessionId: string, imageId: string): string;
 }
 
 interface EventStream {
@@ -92,10 +120,15 @@ async function requireOk(response: Response): Promise<Response> {
 export class HttpRunnerClient implements RunnerClient {
   constructor(
     private readonly origin: string,
-    private readonly expectedPipelineCommit: string,
+    private readonly expectedPipelineCommit: string | readonly string[],
     private readonly fetcher: typeof fetch = fetch,
     private readonly eventSourceFactory: EventSourceFactory = url => new EventSource(url)
   ) {}
+
+  private commitAccepted(commit: string): boolean {
+    const accepted = typeof this.expectedPipelineCommit === "string" ? [this.expectedPipelineCommit] : this.expectedPipelineCommit;
+    return accepted.includes(commit);
+  }
 
   async getHealth(): Promise<RunnerHealth> {
     const response = await requireOk(await this.fetcher(joinUrl(this.origin, "/api/health")));
@@ -121,7 +154,7 @@ export class HttpRunnerClient implements RunnerClient {
       || typeof value.test_only !== "boolean"
       || !Number.isInteger(value.last_sequence)
       || (value.last_sequence as number) < 0) throw new Error("Runner returned invalid session state");
-    if (value.pipeline_commit !== this.expectedPipelineCommit) throw new Error("Session pipeline commit does not match the expected pin");
+    if (!this.commitAccepted(value.pipeline_commit as string)) throw new Error("Session pipeline commit does not match the expected pin");
     return value as RunnerSession;
   }
 
@@ -147,7 +180,7 @@ export class HttpRunnerClient implements RunnerClient {
     const value = await response.json() as { session_id?: unknown; test_only?: unknown; pipeline_commit?: unknown };
     if (typeof value.session_id !== "string" || !value.session_id) throw new Error("Runner returned no session ID");
     if (typeof value.test_only !== "boolean" || typeof value.pipeline_commit !== "string") throw new Error("Runner returned an invalid session");
-    if (value.pipeline_commit !== this.expectedPipelineCommit) throw new Error("Session pipeline commit does not match the expected pin");
+    if (!this.commitAccepted(value.pipeline_commit as string)) throw new Error("Session pipeline commit does not match the expected pin");
     return { session_id: value.session_id, test_only: value.test_only, pipeline_commit: value.pipeline_commit };
   }
 
@@ -182,7 +215,7 @@ export class HttpRunnerClient implements RunnerClient {
         try {
           const value: unknown = JSON.parse((rawEvent as MessageEvent<string>).data);
           if (!isRunnerEvent(value, type, sessionId)) throw new Error("invalid envelope");
-          if (value.pipeline_commit !== this.expectedPipelineCommit) {
+          if (!this.commitAccepted(value.pipeline_commit as string)) {
             terminate("Runner event pipeline commit does not match the expected pin");
             return;
           }
@@ -199,6 +232,22 @@ export class HttpRunnerClient implements RunnerClient {
       listeners.forEach(({ type, listener }) => source.removeEventListener(type, listener));
       closeSource();
     };
+  }
+
+  async getDecisions(sessionId: string): Promise<DecisionRecords> {
+    const response = await requireOk(await this.fetcher(joinUrl(this.origin, `/api/sessions/${encodeURIComponent(sessionId)}/decisions`)));
+    return parseDecisionRecords(await response.json());
+  }
+
+  async getEvidenceBundle(sessionId: string): Promise<EvidenceBundle | null> {
+    const response = await this.fetcher(joinUrl(this.origin, `/api/sessions/${encodeURIComponent(sessionId)}/evidence-bundle`));
+    if (response.status === 404) return null;
+    await requireOk(response);
+    return parseEvidenceBundle(await response.json());
+  }
+
+  evidenceImageUrl(sessionId: string, imageId: string): string {
+    return joinUrl(this.origin, `/api/sessions/${encodeURIComponent(sessionId)}/evidence/images/${encodeURIComponent(imageId)}`);
   }
 
   async acknowledge(sessionId: string, alarmId: string, acknowledgedBy: string): Promise<void> {
