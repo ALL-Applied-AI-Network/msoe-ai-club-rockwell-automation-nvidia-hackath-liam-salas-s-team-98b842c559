@@ -2,6 +2,60 @@
 
 Newest entries appear first. Evidence labels follow `AGENTS.md`.
 
+## 2026-11-01 — Step 12 results and Brev finalization
+
+### Result
+
+- **Source-file observation:** the newest main-checkout review is SHA-256
+  `67249a23...ef8f3`, entry ~19:55 CST. It accepts the measured Step 10 result, authorizes
+  the Step 12 write-up, requires every remaining Brev output to be copied and hash-verified,
+  and directs Codex to leave the instance running for Claude.
+- **Measured write-up:** `docs/fill-level-cnn-results.md` now covers Revision 2 training,
+  both failed validation gates, failed calibration, frozen Step 9 and Step 10 results, both
+  synthetic-test cohorts, real-check zone and transition/repeat splits, the four worst
+  vials, the broad hidden ranges, and every required prior-exposure disclosure. Independent
+  read-only recomputation found no metric discrepancy. All 15 relative document links
+  resolve and `git diff --check` passes. Commit `01b355f` records the write-up.
+- **Measured final inventory:** an exhaustive container/host/local comparison found one
+  remaining gap: the preserved zero-frame Step 8 Revision 2 batch-v2 launch failure at host
+  `step8-r2-batch-20261101-codex-01/preserved-failures/`
+  `00-train-0103000-0103099-attempt-01-v2`. It contains five log/state files, 41,725
+  bytes, and no render. Container and host hashes matched.
+- The missing evidence was copied without overwrite from the Brev host to fresh ignored
+  local `outputs/fill-level-cnn/step8-r2-batch-20261101-codex-01/`
+  `preserved-failures/`. Local count and bytes are exactly 5 and 41,725. The ordered local
+  five-file ledger hashes to `6efbaa09...4c83`; every individual SHA-256 matches the host:
+  `4bb22cd0...e34e` render log, `dc34fda8...c99c` attempt state,
+  `a798c0f2...e28f` progress, `4164354a...0481` supervisor state and
+  `f215e761...46e0` supervisor log.
+- All other evidence was already accounted for: all 18 host checksum manifests have
+  byte-identical local counterparts; remaining roots match local counts and byte totals;
+  Step 9 is 11 files / 1,104,800 bytes; Step 10 is 13 files / 386,037 bytes; and input-only
+  or empty preflight roots do not contain uncopied output. A final host scan found no file
+  newer than the completed Step 10 collection, no project process, and an idle GPU.
+- Brev `isaac-launchable-d70fec` remains RUNNING / COMPLETED / READY. No further project
+  run is expected. Claude, not Codex, will stop the instance after final review.
+- Brev finished: outputs copied and verified
+
+### Commands run
+
+- Re-read and hash the newest review; reread `AGENTS.md`, the plan and the applicable
+  experiment/change-review workflows.
+- Recompute Step 8, Step 9 and Step 10 metrics from the committed summaries; independently
+  audit the results document; validate every relative link and whitespace.
+- Inventory every Brev evidence root against ignored local copies; compare manifests,
+  counts, sizes and hashes; copy the sole missing five-file failure directory with
+  `brev copy --host` into a fresh ignored path; verify every local hash against the host.
+- Recheck Brev state, newest host output, project processes and GPU without changing the
+  instance or its evidence.
+
+### Problems
+
+- The final inventory found one previously missed zero-frame failure directory. It was
+  preserved on both container and host, copied once to a fresh ignored local path, and
+  fully hash-verified before Brev was declared finished. No evidence was deleted or
+  overwritten.
+
 ## 2026-11-01 — Step 10 measured real-check checkpoint
 
 ### Result
