@@ -44,7 +44,27 @@ and pin, model runtimes, event log, raw JSON per vial, operator-record ledger.
 - The dev video has its own burnt-in caption ("V1 KEEP"); the system result is discard.
   That disagreement is in the twin data, not the UI.
 
-**Measured.** 54 Vitest tests pass; `npm run typecheck` and `npm run build` pass;
+**Independent review (one pass, opus) and what was done.** Fixed:
+- The Detail screen crashed when the average abstained.
+- The rule's discard alarm stayed up after the average kept the vial.
+- Error and service alarms aged out of the capped logs.
+- The override form could record against a newly selected vial.
+- The dev pin override applied in production builds. It is now dev-only, attaching a
+  session needs verified health, and the session commit must equal the health commit.
+- A stale decisions fetch could overwrite a newer one.
+- The station explanation is now attributed to its model and that model's vote.
+- A "Provisional: rule only" label shows while votes are pending.
+- Replay crash paths are closed, and receipts are released in event order.
+- EventSource reconnect failed: it sent `Last-Event-ID` next to `after=0`, which the runner
+  rejects. The client now closes the stream and resubscribes from the last applied sequence.
+
+Not fixed:
+- Sessions with more than one cohort map vials by `tray_index` and use a single bundle.
+  The dev video has one cohort.
+- The alarm drawer has no focus trap.
+- `getHealth` rejects an `unhealthy` status.
+
+**Measured.** 60 Vitest tests pass; `npm run typecheck` and `npm run build` pass;
 Playwright `e2e` (test-only simulator, all screens + drawer) 1/1; `e2e:screens` 1/1 against
 the live runner and 1/1 against the replay. Screenshots (light and dark, 1920×1080):
 `ui/test-results/screenshots/redesign-{live-10c106f,replay-2344f3c}-{L1-overview,L2-station,L3-detail,L4-diagnostics,alarms}-{light,dark}-1920x1080.png`

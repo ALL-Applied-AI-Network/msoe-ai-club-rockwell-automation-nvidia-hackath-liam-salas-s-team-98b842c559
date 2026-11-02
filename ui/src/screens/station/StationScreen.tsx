@@ -13,7 +13,7 @@ export function StationScreen({ model, operatorId, onOpenDetail }: StationScreen
     <section className="screen station" aria-label="Inspection station">
       <div className="station-top">
         <VideoPanel model={model} />
-        <CurrentVialCard model={model} operatorId={operatorId} onOpenDetail={onOpenDetail} />
+        <CurrentVialCard key={model.selectedVialId ?? "none"} model={model} operatorId={operatorId} onOpenDetail={onOpenDetail} />
       </div>
       <TrayStrip model={model} />
       <CountsBar model={model} />

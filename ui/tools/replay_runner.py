@@ -65,7 +65,10 @@ class Recording:
         for prev, cur in zip(events, events[1:]):
             gap = max(0.0, parse_time(cur["emitted_at"]) - parse_time(prev["emitted_at"]))
             self.offsets.append(self.offsets[-1] + min(gap, max_gap))
+        # Receipts appear in the same order as their events: the rule receipt with the rule decision,
+        # the final record (with VLM sources) only once the averaged decision has been replayed.
         self.first_decision_seq = next((e["sequence"] for e in events if e["type"] == "vial_decision"), None)
+        self.first_average_seq = next((e["sequence"] for e in events if e["type"] == "averaged_decision"), None)
         self.image_ids = {i["image_id"] for i in (bundle or {}).get("images", []) if isinstance(i, dict) and "image_id" in i}
         self.started_at: float | None = None
         self.acks: dict[str, str] = {}
@@ -151,12 +154,21 @@ class Handler(BaseHTTPRequestHandler):
             if not tail:
                 self._json(HTTPStatus.OK, self._session_doc())
             elif tail == ["events"]:
-                after = int(parse_qs(url.query).get("after", [self.headers.get("Last-Event-ID") or "0"])[0])
+                try:
+                    after = int(parse_qs(url.query).get("after", [self.headers.get("Last-Event-ID") or "0"])[0])
+                except ValueError:
+                    self._json(HTTPStatus.BAD_REQUEST, {"error": {"code": "invalid_request", "message": "after must be an integer"}})
+                    return
                 self._sse(after)
             elif tail == ["decisions"]:
-                released = rec.events[: rec.available()]
-                decided = rec.first_decision_seq is not None and any(e["sequence"] >= rec.first_decision_seq for e in released)
-                self._json(HTTPStatus.OK, rec.decisions if decided else [])
+                last = rec.events[rec.available() - 1]["sequence"] if rec.available() else 0
+                if rec.first_average_seq is not None and last >= rec.first_average_seq:
+                    rows = rec.decisions
+                elif rec.first_decision_seq is not None and last >= rec.first_decision_seq:
+                    rows = [r for r in rec.decisions if isinstance(r, dict) and r.get("type") == "deterministic"]
+                else:
+                    rows = []
+                self._json(HTTPStatus.OK, rows)
             elif tail == ["evidence-bundle"] and rec.bundle is not None:
                 self._json(HTTPStatus.OK, rec.bundle)
             elif len(tail) == 3 and tail[:2] == ["evidence", "images"] and rec.images_dir is not None:
@@ -221,7 +233,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self) -> None:
         parts = [p for p in urlparse(self.path).path.split("/") if p]
         length = int(self.headers.get("Content-Length") or 0)
-        body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+        try:
+            body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+        except ValueError:
+            body = None
         if len(parts) == 6 and parts[:2] == ["api", "sessions"] and parts[3] == "alarms" and parts[5] == "acknowledgement":
             who = body.get("acknowledged_by") if isinstance(body, dict) else None
             if not isinstance(who, str) or not who:

@@ -130,7 +130,7 @@ export function alarmList(runner: RunnerState | null, localAcks: ReadonlySet<str
   const items: AlarmItem[] = [];
   for (const vialId of runner.trayOrder) {
     const vial = runner.vials[vialId];
-    const runnerAlarm = vial.average?.alarm ?? vial.decision?.alarm;
+    const runnerAlarm = vial.average ? vial.average.alarm : vial.decision?.alarm ?? null;
     const disposition = finalDisposition(vial);
     if (runnerAlarm) {
       items.push({
@@ -147,12 +147,12 @@ export function alarmList(runner: RunnerState | null, localAcks: ReadonlySet<str
       });
     }
   }
-  const unhealthy = runner.rateHistory.find(r => r.status !== "healthy");
+  const unhealthy = runner.firstUnhealthy;
   if (unhealthy) {
     const id = `ui-service-${unhealthy.status}`;
     items.push({ id, priority: "medium", at: unhealthy.emitted_at, vialId: null, vialLabel: null, message: `Service ${unhealthy.status}.`, origin: "ui", acknowledged: localAcks.has(id) });
   }
-  for (const entry of runner.eventLog.filter(e => e.type === "error")) {
+  for (const entry of runner.errorLog) {
     const id = `ui-error-${entry.sequence}`;
     items.push({ id, priority: "critical", at: entry.emitted_at, vialId: entry.vialId, vialLabel: null, message: `Pipeline error: ${entry.summary}`, origin: "ui", acknowledged: localAcks.has(id) });
   }

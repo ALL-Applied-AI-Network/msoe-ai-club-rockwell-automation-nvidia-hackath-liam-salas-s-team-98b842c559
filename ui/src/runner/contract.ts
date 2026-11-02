@@ -93,13 +93,15 @@ export interface RunnerState {
   readonly sessionId: string; readonly lastSequence: number; readonly appliedEvents: Readonly<Record<number, string>>;
   readonly vials: Readonly<Record<string, VialState>>; readonly trayOrder: readonly string[]; readonly rate?: RateHealthPayload;
   readonly testOnly: boolean; readonly error?: string; readonly protocolError?: string;
-  readonly eventLog: readonly LoggedEvent[]; readonly rateHistory: readonly { readonly emitted_at: string; readonly processing_fps: number; readonly status: RateHealthPayload["status"] }[];
+  readonly eventLog: readonly LoggedEvent[];
+  /** Uncapped: every error event, and the first non-healthy rate report, so alarms never age out of the capped logs. */
+  readonly errorLog: readonly LoggedEvent[]; readonly firstUnhealthy?: { readonly emitted_at: string; readonly processing_fps: number; readonly status: RateHealthPayload["status"] }; readonly rateHistory: readonly { readonly emitted_at: string; readonly processing_fps: number; readonly status: RateHealthPayload["status"] }[];
 }
 const EVENT_LOG_LIMIT = 400;
 const RATE_HISTORY_LIMIT = 240;
 
 export function initialRunnerState(sessionId: string, testOnly = false): RunnerState {
-  return { sessionId, lastSequence: 0, appliedEvents: {}, vials: {}, trayOrder: [], testOnly, eventLog: [], rateHistory: [] };
+  return { sessionId, lastSequence: 0, appliedEvents: {}, vials: {}, trayOrder: [], testOnly, eventLog: [], errorLog: [], rateHistory: [] };
 }
 
 function eventFingerprint(event: RunnerEvent): string { return JSON.stringify(event); }
@@ -161,9 +163,12 @@ export function reduceRunnerEvent(state: RunnerState, event: RunnerEvent): Runne
   if (event.sequence !== expected) return { ...state, protocolError: `Expected sequence ${expected}, received ${event.sequence}. Live decisions are unavailable.` };
   let next = updateVial(state, event);
   if (event.type === "rate_health") {
+    const sample = { emitted_at: event.emitted_at, processing_fps: event.payload.processing_fps, status: event.payload.status };
+    if (!next.firstUnhealthy && sample.status !== "healthy") next = { ...next, firstUnhealthy: sample };
     next = { ...next, rate: event.payload, rateHistory: [...next.rateHistory, { emitted_at: event.emitted_at, processing_fps: event.payload.processing_fps, status: event.payload.status }].slice(-RATE_HISTORY_LIMIT) };
   } else {
-    next = { ...next, eventLog: [...next.eventLog, logEntry(event)].slice(-EVENT_LOG_LIMIT) };
+    const entry = logEntry(event);
+    next = { ...next, eventLog: [...next.eventLog, entry].slice(-EVENT_LOG_LIMIT), errorLog: event.type === "error" ? [...next.errorLog, entry] : next.errorLog };
   }
   if (event.type === "error") next = { ...next, error: event.payload.message };
   return { ...next, lastSequence: event.sequence, appliedEvents: { ...next.appliedEvents, [event.sequence]: fingerprint } };

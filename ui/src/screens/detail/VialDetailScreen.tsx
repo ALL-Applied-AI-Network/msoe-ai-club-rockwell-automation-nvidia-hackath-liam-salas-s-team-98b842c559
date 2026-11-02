@@ -33,7 +33,7 @@ export function VialDetailScreen({ model, vialId, onSelectVial }: VialDetailScre
         </div>
         <div className={`state state--${view.tone} detail-state`}><span className="state-shape" aria-hidden="true">{view.icon}</span><span>{view.label}</span></div>
         <p className="detail-line">{line}</p>
-        {avg && <p className="detail-avg">equal-weight average {score!.toFixed(2)} → {dispositionView(avg.disposition).label.toLowerCase()} <span className="source-tag">discard score</span></p>}
+        {avg && <p className="detail-avg">{score != null ? <>equal-weight average {score.toFixed(2)} → {dispositionView(avg.disposition).label.toLowerCase()}</> : <>average unavailable ({avg.unavailable_reason ?? "too few valid votes"})</>} <span className="source-tag">inferred</span></p>}
       </header>
       <EvidenceGrid model={model} vial={vial} />
       <ModelCards model={model} vial={vial} />

@@ -1,3 +1,5 @@
+import { SOURCE_NAMES, sourceKeyForModel } from "../../model/selectors";
+import type { VialState as ExplainedVial } from "../../runner/contract";
 import { useState } from "react";
 
 import { dispositionView, finalDisposition, sourceAgreement, vialLabel, vialRole, vialView, type SourceAgreement } from "../../model/selectors";
@@ -61,10 +63,11 @@ export function CurrentVialCard({ model, operatorId, onOpenDetail }: { readonly 
     <section className="panel station-card" aria-label="Current vial">
       <p className="kicker">Current vial · {vialLabel(vial)} · {role === "reference" ? "reference" : "judged"}</p>
       <p className={`state state--${view.tone} station-state`} data-testid="big-state"><span className="state-shape" aria-hidden="true">{view.icon}</span>{view.label}</p>
+      {vial.decision && !vial.average && model.runPhase === "running" && <p className="station-plain station-provisional">Provisional: rule result only; model votes pending.</p>}
       {role === "reference" && !disposition && <p className="station-plain">Reference vial: used to judge vial {Math.floor(vial.position.tray_index / model.vialCount) * model.vialCount + 1}, not judged itself.</p>}
       {isInsufficient(vial)
         ? <p className="station-plain">{cantAssessMessage(code)} {code && <small className="station-code">({code})</small>}</p>
-        : explanation && <p className="station-plain">{explanation.item.plain_language} <span className={`source-tag source-tag--${explanation.fallback ? "deterministic_fallback" : "inferred"}`}>{explanation.fallback ? "template text" : "model-written"}</span></p>}
+        : explanation && <p className="station-plain">{explanation.item.plain_language} <span className={`source-tag source-tag--${explanation.fallback ? "deterministic_fallback" : "inferred"}`}>{explanation.fallback ? "template text" : `model-written · ${sourceName(explanation.item.producer.model_id)}${voteOf(vial, explanation.item.producer.model_id)}`}</span></p>}
       {disposition && (
         <>
           <div className="station-agreement">
@@ -104,4 +107,15 @@ export function CurrentVialCard({ model, operatorId, onOpenDetail }: { readonly 
       )}
     </section>
   );
+}
+
+function sourceName(modelId: string): string {
+  const key = sourceKeyForModel(modelId);
+  return key ? SOURCE_NAMES[key] : modelId;
+}
+
+/** The writer's own vote, so an explanation from a model that disagrees with the final is visibly attributed. */
+function voteOf(vial: ExplainedVial, modelId: string): string {
+  const vote = vial.votes.find(v => v.model.model_id === modelId);
+  return vote ? `, voted ${vote.disposition}` : "";
 }

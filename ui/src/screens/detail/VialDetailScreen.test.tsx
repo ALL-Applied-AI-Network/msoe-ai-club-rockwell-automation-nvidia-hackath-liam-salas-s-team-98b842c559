@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import { runnerEvent } from "../../test/fakeClient";
 import { hybridModel, modelFromEvents } from "../../test/modelFixture";
 import { VialDetailScreen } from "./VialDetailScreen";
 
@@ -74,5 +75,16 @@ describe("header", () => {
   it("shows a friendly empty state", () => {
     show(modelFromEvents([]));
     expect(screen.getByText(/No vial to show yet/)).toBeInTheDocument();
+  });
+});
+
+describe("VialDetailScreen review regressions", () => {
+  it("does not crash when the equal-weight average abstains", () => {
+    const model = modelFromEvents([
+      runnerEvent(1, "vial_decision", { disposition: "discard" }, "vial-a", 0),
+      runnerEvent(2, "averaged_decision", { disposition: "insufficient_evidence", average: 0 }, "vial-a", 0)
+    ]);
+    render(<VialDetailScreen model={model} vialId="vial-a" onSelectVial={() => undefined} />);
+    expect(screen.getByText(/average unavailable/i)).toBeInTheDocument();
   });
 });

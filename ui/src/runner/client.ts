@@ -209,6 +209,9 @@ export class HttpRunnerClient implements RunnerClient {
       const listener: EventListener = rawEvent => {
         if (terminal) return;
         if (type === "error" && !(rawEvent instanceof MessageEvent)) {
+          // Stop EventSource auto-reconnect: it would resend Last-Event-ID next to ?after=0, which the
+          // runner rejects. The caller resubscribes from its last applied sequence instead.
+          closeSource();
           onDisconnect({ kind: "transport", message: "Runner connection interrupted" });
           return;
         }

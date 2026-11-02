@@ -98,9 +98,12 @@ export function useInspection(client: RunnerClient, expectedCommit: string, devA
       : devAllowedCommits.includes(health.pipeline_commit) ? "dev_override" : "mismatch";
   const disclosedHybrid = !!health && !health.test_only && health.pipeline_commit === HYBRID_SERVICE_COMMIT;
 
+  const decisionsRequest = useRef(0);
   const fetchDecisions = useCallback((sessionId: string, version: number) => {
+    const request = ++decisionsRequest.current;
     client.getDecisions(sessionId).then(value => {
-      if (mounted.current && version === sessionVersion.current) { setDecisions(value); setDecisionsError(null); }
+      // Only the newest request may apply: an older, slower response must not overwrite a newer receipt.
+      if (mounted.current && version === sessionVersion.current && request === decisionsRequest.current) { setDecisions(value); setDecisionsError(null); }
     }).catch(reason => {
       if (mounted.current && version === sessionVersion.current) setDecisionsError(reason instanceof Error ? reason.message : String(reason));
     });
@@ -121,8 +124,10 @@ export function useInspection(client: RunnerClient, expectedCommit: string, devA
     setRunPhase("running");
     setConnection(`Connected · session ${sessionId}`);
     fetchDecisions(sessionId, version);
-    closeStream.current = client.subscribe(sessionId, 0, next => {
+    let lastSequence = 0;
+    const connect = (after: number) => { closeStream.current = client.subscribe(sessionId, after, next => {
       if (!mounted.current || version !== sessionVersion.current) return;
+      lastSequence = Math.max(lastSequence, next.sequence);
       setRunner(current => current ? reduceRunnerEvent(current, next) : current);
       if (next.type === "vial_decision" || next.type === "averaged_decision" || next.type === "explanation") fetchDecisions(sessionId, version);
     }, notice => {
@@ -146,11 +151,15 @@ export function useInspection(client: RunnerClient, expectedCommit: string, devA
           setConnection("Run failed");
           setRunPhase("failed");
           setStreamFailure("Run failed. The runner reported that this session failed.");
+        } else {
+          // Still running: resume from the last applied event (replay is idempotent in the reducer).
+          setTimeout(() => { if (mounted.current && version === sessionVersion.current) connect(lastSequence); }, 1000);
         }
       }).catch(() => {
         if (mounted.current && version === sessionVersion.current) setConnection("Connection interrupted — reconnecting. Session state is unavailable.");
       });
-    });
+    }); };
+    connect(0);
   }, [client, fetchDecisions]);
 
   const start = useCallback(async (source: RunnerSource) => {
@@ -164,6 +173,7 @@ export function useInspection(client: RunnerClient, expectedCommit: string, devA
     try {
       const session = await client.createSession(source);
       if (!mounted.current || version !== sessionVersion.current) return;
+      if (health && session.pipeline_commit !== health.pipeline_commit) throw new Error(`Session commit ${session.pipeline_commit.slice(0, 7)} differs from service health ${health.pipeline_commit.slice(0, 7)}`);
       setRunContext(source.runContext);
       setSourceKind(source.type);
       setSourceLabel(source.type === "video" ? source.file.name : source.type === "v4l2" ? source.device : source.url);
@@ -176,15 +186,20 @@ export function useInspection(client: RunnerClient, expectedCommit: string, devA
     } finally {
       if (mounted.current && version === sessionVersion.current) setBusy(false);
     }
-  }, [client, follow, pinStatus]);
+  }, [client, follow, pinStatus, health]);
 
   const attach = useCallback(async (sessionId: string, videoFile?: File | null) => {
+    if (pinStatus !== "verified" && pinStatus !== "dev_override") {
+      setStartError("Cannot open a session until runner health and pipeline commit are verified.");
+      return;
+    }
     setBusy(true); setStartError(null); setStreamFailure(null);
     closeStream.current?.();
     const version = ++sessionVersion.current;
     try {
       const session = await client.getSession(sessionId);
       if (!mounted.current || version !== sessionVersion.current) return;
+      if (health && session.pipeline_commit !== health.pipeline_commit) throw new Error(`Session commit ${session.pipeline_commit.slice(0, 7)} differs from service health ${health.pipeline_commit.slice(0, 7)}`);
       setRunContext(null);
       setSourceKind("attached");
       setSourceLabel(`session ${sessionId}`);
@@ -197,7 +212,7 @@ export function useInspection(client: RunnerClient, expectedCommit: string, devA
     } finally {
       if (mounted.current && version === sessionVersion.current) setBusy(false);
     }
-  }, [client, follow]);
+  }, [client, follow, pinStatus, health]);
 
   const setVideoFile = useCallback((file: File | null) => {
     setVideoUrl(file && typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : null);
