@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping
 from copy import deepcopy
 import math
 import re
+from tempfile import TemporaryDirectory
 
 import numpy as np
 from PIL import Image
@@ -324,6 +325,7 @@ class QuickFillPipelineAdapter:
         predictor: Callable[[np.ndarray, np.ndarray], object],
         run_context: Mapping[str, object],
         calibration: object | None = None,
+        vlm_runner: Callable[[object], object] | None = None,
     ):
         self.core = QuickFillCore(predictor)
         self.run_context = dict(run_context)
@@ -331,6 +333,12 @@ class QuickFillPipelineAdapter:
             self.run_context.get("dispense_plan")
         )
         self.calibration = calibration
+        self._vlm_runner = vlm_runner
+        self._vlm_directory = (
+            TemporaryDirectory(prefix="fluidmix-quick-vlm-")
+            if vlm_runner is not None else None
+        )
+        self._images_by_vial: dict[str, np.ndarray] = {}
         self._detected_vials = 0
         self._fallback_cohort = 1
         self._fallback_position = 0
@@ -446,22 +454,49 @@ class QuickFillPipelineAdapter:
             }],
         }
 
-    def build_vlm_bundle(self, vials: Mapping[str, object]) -> Mapping[str, object]:
+    def build_vlm_bundle(self, vials: Mapping[str, object]) -> object:
         ordered = sorted(
             vials.values(), key=lambda row: int(row["vial_position"])
         )
         context = ordered[0].get("quick_fill_context", {}) if ordered else {}
-        return {
+        fallback = {
             "mode": "quick_fill", "vials": deepcopy(dict(vials)),
             "dispense_context": deepcopy(context),
             "carryover_context": deepcopy(self._latest_carryover),
         }
+        if self._vlm_runner is None or self._vlm_directory is None or len(ordered) < 3:
+            return fallback
+        from fluidmix.pipeline.service.quick_fill_vlm import build_quick_vlm_bundle
+        cohort = int(ordered[0].get("cohort_ordinal", 1))
+        return build_quick_vlm_bundle(
+            ordered, self._images_by_vial,
+            f"{self._vlm_directory.name}/cohort-{cohort}",
+            dispense_context=context,
+            carryover_context=self._latest_carryover,
+        )
 
-    def run_vlm(self, _bundle: object) -> tuple[Mapping[str, object], ...]:
+    def run_vlm(self, bundle: object) -> tuple[Mapping[str, object], ...]:
+        if self._vlm_runner is not None and not isinstance(bundle, Mapping):
+            try:
+                rows = tuple(self._vlm_runner(bundle))
+                if len(rows) != 2:
+                    raise ValueError("quick-fill VLM runtime did not return Qwen and Cosmos")
+                return rows
+            except Exception as error:
+                print(
+                    f"quick-fill VLM runtime failed closed: {type(error).__name__}: {error}",
+                    flush=True,
+                )
+                return self._unavailable_model_rows(
+                    f"quick_fill_vlm_runtime_failed:{type(error).__name__}"
+                )
+        return self._unavailable_model_rows("quick_fill_vlm_not_run")
+
+    @staticmethod
+    def _unavailable_model_rows(reason: str) -> tuple[Mapping[str, object], ...]:
         models = (
             ("Qwen/Qwen3-VL-8B-Instruct", "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b"),
             ("nvidia/Cosmos-Reason2-8B", "a9fae2cf89dc64db96b12860417f0eb403013bb9"),
-            ("aacudad/AnomalyThink-Qwen3-VL-8B-KCR", "8331bc79ecf01e3466f0e6a27cec8c77f182f430"),
         )
         return tuple({
             "source_id": f"quick-fill-vlm-not-run-{index}",
@@ -474,11 +509,13 @@ class QuickFillPipelineAdapter:
             "explanation": None,
             "evidence_citations": [],
             "image_citations": [],
-            "unavailable_reason": "quick_fill_vlm_not_run",
+            "unavailable_reason": reason,
         } for index, (repository, revision) in enumerate(models, start=1))
 
     def close(self) -> None:
-        return None
+        if self._vlm_directory is not None:
+            self._vlm_directory.cleanup()
+            self._vlm_directory = None
 
     @staticmethod
     def _insufficient_decision(
@@ -642,6 +679,7 @@ class QuickFillPipelineAdapter:
         run_id = str(self.run_context.get("operator_run_id") or "quick-fill")
         tray_id = str(self.run_context.get("tray_id") or "tray")
         vial_id = f"{run_id}:{tray_id}:cohort-{cohort}:vial-{position}"
+        self._images_by_vial[vial_id] = np.asarray(vial["rgb"], dtype=np.uint8).copy()
         evidence_id = f"quick-fill-c{cohort}-v{position}-end"
         return {
             "vial_id": vial_id,

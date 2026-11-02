@@ -264,7 +264,9 @@ def validate_artifacts(expected_hashes: Mapping[Path, str] = EXPECTED_HASHES) ->
         raise ProductionFactoryError("accepted VLM freeze decision source differs from onion module")
 
 
-def _snapshot_paths() -> dict[str, Path]:
+def _snapshot_paths(
+    repositories: Sequence[str] | None = None,
+) -> dict[str, Path]:
     root = PIPELINE_ROOT / "wp6-model-weights-01a18128"
     directory_names = {
         "Qwen/Qwen3-VL-8B-Instruct": "qwen3-vl-8b-instruct",
@@ -273,7 +275,12 @@ def _snapshot_paths() -> dict[str, Path]:
     }
     from fluidmix.explanation.vlm.stock_runtime import snapshot_inventory
     result = {}
+    selected = set(repositories) if repositories is not None else set(MODEL_REVISIONS)
+    if not selected or not selected.issubset(MODEL_REVISIONS):
+        raise ProductionFactoryError("requested model snapshot set is invalid")
     for repository, revision in MODEL_REVISIONS.items():
+        if repository not in selected:
+            continue
         path = root / directory_names[repository]
         if path.is_symlink() or not path.is_dir():
             raise ProductionFactoryError(f"pinned local model snapshot unavailable: {repository}")
@@ -783,6 +790,7 @@ class DefaultProductionFactory:
     def __init__(self):
         self._factory: ProductionAdapterFactory | None = None
         self._quick_models: dict[tuple[str, str], object] = {}
+        self._quick_vlm_snapshots: dict[str, Path] | None = None
 
     def __call__(self, run_context: Mapping[str, object], device: str):
         raise ProductionFactoryError("production factory requires a session source binding")
@@ -834,7 +842,35 @@ class DefaultProductionFactory:
             read_regular_file(CALIBRATION, "pixel calibration"),
             expected_sha256=EXPECTED_HASHES[CALIBRATION],
         )
-        return QuickFillPipelineAdapter(predictor, context, calibration)
+        vlm_runner = None
+        if device == "cuda":
+            validate_artifacts()
+            if self._quick_vlm_snapshots is None:
+                self._quick_vlm_snapshots = _snapshot_paths((
+                    "Qwen/Qwen3-VL-8B-Instruct", "nvidia/Cosmos-Reason2-8B",
+                ))
+
+            def vlm_runner(built: object):
+                from fluidmix.explanation.vlm.stock_runtime import (
+                    invoke_stock_runtime, load_stock_runtime,
+                )
+                from fluidmix.pipeline.service.quick_fill_vlm import (
+                    run_quick_vlm_runtime,
+                )
+                aggregate = run_quick_vlm_runtime(
+                    built, self._quick_vlm_snapshots,
+                    runtime_loader=load_stock_runtime,
+                    runtime_invoker=invoke_stock_runtime,
+                )
+                return tuple(
+                    row for row in aggregate["sources"]
+                    if isinstance(row, Mapping)
+                    and isinstance(row.get("repository"), str)
+                )
+
+        return QuickFillPipelineAdapter(
+            predictor, context, calibration, vlm_runner=vlm_runner,
+        )
 
 
 factory = DefaultProductionFactory()
