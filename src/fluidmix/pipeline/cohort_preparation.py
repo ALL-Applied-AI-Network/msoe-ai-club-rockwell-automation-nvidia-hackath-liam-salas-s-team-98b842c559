@@ -168,7 +168,7 @@ _ACCEPTED_RUN_TEST_PROFILE = _AcceptedRunTestProfile(
 )
 
 
-_REPOSITORY_ROOT = Path(__file__).absolute().parents[2]
+_REPOSITORY_ROOT = Path(__file__).absolute().parents[3]
 _VIDEO5_FILL_RANGES = (
     (0, 808), (1386, 2210), (2752, 3616),
     (4148, 4841), (5373, 6094), (6630, 7393),

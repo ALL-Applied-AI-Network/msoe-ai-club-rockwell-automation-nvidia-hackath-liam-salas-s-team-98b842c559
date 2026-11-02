@@ -62,6 +62,21 @@ _WP1_EXECUTION_PROFILE = {
         "geometry_sha256": "57f578fd047d3a5f2ee25712d841f836272fc745a89c5dfbcc301f0c199191db",
     },
 }
+# The onion restructure rewrote imports in the renderer and offline validator, so their
+# file hashes changed without any logic change. WP1 receipts recorded before the move carry
+# the pre-move hashes; accept exactly that identity for them and nothing else.
+_WP1_PRE_ONION_EXECUTION_PROFILE = {
+    **_WP1_EXECUTION_PROFILE,
+    "implementation": {
+        **_WP1_EXECUTION_PROFILE["implementation"],
+        "renderer_sha256": "c8be7ec97131d2e9de3cb1656ffd1f23fbae80b03fc27864158db929c29f8c24",
+        "offline_validator_sha256": "3780a83579cf807cf8f4041bdfc931f8b98c374ae8f7eaea386be04ed6ac2315",
+    },
+}
+_WP1_ACCEPTED_EXECUTION_PROFILES = (_WP1_EXECUTION_PROFILE, _WP1_PRE_ONION_EXECUTION_PROFILE)
+_WP1_ACCEPTED_RENDERER_SHA256 = frozenset(
+    profile["implementation"]["renderer_sha256"] for profile in _WP1_ACCEPTED_EXECUTION_PROFILES
+)
 _DP3_LINEAGE_FIXED = {
     "gpu_model": _WP1_EXECUTION_PROFILE["gpu_model"],
     "isaac_sim_version": _WP1_EXECUTION_PROFILE["isaac_sim_version"],
@@ -844,7 +859,7 @@ def _validated_fallback_host_profile(path: Path, expected_sha256: object) -> dic
             key: profile.get(key)
             for key in ("gpu_model", "isaac_sim_version", "kit_version", "implementation")
         }
-        != _WP1_EXECUTION_PROFILE
+        not in _WP1_ACCEPTED_EXECUTION_PROFILES
     ):
         raise ValueError("fallback runtime profile/lineage differs")
     return profile
@@ -1627,7 +1642,7 @@ def _validate_fill_readiness(
         or readiness.get("artifact_type") != "fluidmix_wp1_fill_readiness_v1"
         or readiness.get("status") != "pass"
         or readiness.get("proof_case_id") != "CASE_91365fbcc3369a1c"
-        or readiness.get("execution_profile") != _WP1_EXECUTION_PROFILE
+        or readiness.get("execution_profile") not in _WP1_ACCEPTED_EXECUTION_PROFILES
     ):
         raise ValueError("runtime_profile_mismatch: WP1 fill readiness is invalid")
     objects: dict[str, dict[str, object]] = {}
@@ -1670,7 +1685,7 @@ def _validate_fill_readiness(
                 "implementation",
             )
         }
-        != _WP1_EXECUTION_PROFILE
+        not in _WP1_ACCEPTED_EXECUTION_PROFILES
     ):
         raise ValueError("runtime_profile_mismatch: actual L40S host profile is invalid")
     proof = objects["supervisor_case_result"]
@@ -1734,7 +1749,7 @@ def _validate_fill_readiness(
             or versions.get("kit") != _WP1_EXECUTION_PROFILE["kit_version"]
             or not isinstance(provenance, Mapping)
             or provenance.get("script_sha256")
-            != _WP1_EXECUTION_PROFILE["implementation"]["renderer_sha256"]
+            not in _WP1_ACCEPTED_RENDERER_SHA256
             or provenance.get("requested_stage_sha256")
             != _WP1_EXECUTION_PROFILE["implementation"]["fill_station_sha256"]
         ):
@@ -1744,7 +1759,7 @@ def _validate_fill_readiness(
     return {
         "receipt_path": str(readiness_path),
         "receipt_sha256": file_sha256(readiness_path),
-        "execution_profile": deepcopy(_WP1_EXECUTION_PROFILE),
+        "execution_profile": deepcopy(readiness["execution_profile"]),
         "host_profile": deepcopy(host_profile),
     }, execution_host
 
@@ -2155,7 +2170,7 @@ def _validate_transport_readiness_binding(
         or value.get("status") != "pass"
         or value.get("owner_thread_id") != aggregate.get("owner_thread_id")
         or value.get("proof_case_id") != aggregate.get("proof_case_id")
-        or value.get("execution_profile") != _WP1_EXECUTION_PROFILE
+        or value.get("execution_profile") not in _WP1_ACCEPTED_EXECUTION_PROFILES
     ):
         raise ValueError("transport WP1 fill readiness binding differs")
     canonical_path = _absolute_regular_file(
@@ -3360,7 +3375,7 @@ def validate_wp1_acceptance(
                 }
             )
         if any(
-            record["execution_profile"] != _WP1_EXECUTION_PROFILE
+            record["execution_profile"] not in _WP1_ACCEPTED_EXECUTION_PROFILES
             for record in readiness_records
         ):
             raise ValueError("runtime_profile_mismatch across the two host names")

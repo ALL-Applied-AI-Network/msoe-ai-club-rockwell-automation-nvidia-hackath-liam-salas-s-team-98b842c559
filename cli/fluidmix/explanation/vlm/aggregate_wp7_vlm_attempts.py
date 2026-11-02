@@ -7,7 +7,7 @@ import argparse
 from pathlib import Path
 import sys
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "src"))
 
 from fluidmix.explanation.vlm.decision import aggregate_model_attempts_from_files
 

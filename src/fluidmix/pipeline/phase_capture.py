@@ -17,7 +17,7 @@ from .rgb_runtime import RGBRuntimeError, compose_fill_windows
 
 
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
-_REPOSITORY_ROOT = Path(__file__).absolute().parents[2]
+_REPOSITORY_ROOT = Path(__file__).absolute().parents[3]
 _PLAN_FIELDS = {
     "schema_version", "artifact_type", "phase", "capture_origin",
     "video_sha256", "fill_clips", "encoded_transition_evidence",
