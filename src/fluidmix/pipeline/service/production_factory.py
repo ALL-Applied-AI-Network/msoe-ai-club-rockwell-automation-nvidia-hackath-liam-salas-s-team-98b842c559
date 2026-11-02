@@ -66,6 +66,36 @@ def validate_session_profile(request: Mapping[str, object]) -> None:
         raise ProductionFactoryError("frozen profile supports only recipe 5")
 
 
+def classify_stream_tank(
+    centre_lab: Sequence[float],
+    freeze: object,
+) -> str | None:
+    """Return a frozen tank only when camera colour is inside its acceptance radius."""
+
+    centres = getattr(freeze, "tank_lab_centres", None)
+    radius = getattr(freeze, "tank_cluster_delta_e76", None)
+    if not isinstance(centres, Mapping) or not centres:
+        raise ProductionFactoryError("frozen tank colour centres are unavailable")
+    if (
+        isinstance(radius, bool)
+        or not isinstance(radius, (int, float))
+        or not math.isfinite(float(radius))
+        or float(radius) <= 0.0
+    ):
+        raise ProductionFactoryError("frozen tank colour radius is invalid")
+    try:
+        distances = {
+            str(tank): math.dist(
+                tuple(float(item) for item in centre_lab), values
+            )
+            for tank, values in centres.items()
+        }
+    except (TypeError, ValueError) as error:
+        raise ProductionFactoryError("stream colour evidence is invalid") from error
+    tank = min(distances, key=distances.get)
+    return tank if distances[tank] <= float(radius) else None
+
+
 def model_attempt_rows(aggregate: object) -> tuple[Mapping[str, object], ...]:
     """Project the aggregate receipt to the per-model rows expected by the runner."""
     if not isinstance(aggregate, Mapping) or not isinstance(aggregate.get("sources"), list):
@@ -538,10 +568,7 @@ class SessionVialTracker:
         active, _count, centre, _spread = measure_stream_lab(rgb, self._reference, freeze)
         if not active or centre is None:
             return None
-        return min(
-            freeze.tank_lab_centres,
-            key=lambda tank: math.dist(centre, freeze.tank_lab_centres[tank]),
-        )
+        return classify_stream_tank(centre, freeze)
 
     def close(self):
         if self._active >= 3 or self._trackers[self._active] is None:
@@ -754,10 +781,7 @@ class ProductionAdapterFactory:
             active, _count, centre, _spread = measure_stream_lab(rgb, reference, freeze)
             if not active or centre is None:
                 return None
-            return min(
-                freeze.tank_lab_centres,
-                key=lambda tank: math.dist(centre, freeze.tank_lab_centres[tank]),
-            )
+            return classify_stream_tank(centre, freeze)
 
         adapter = AcceptedPipelineAdapter(
             tracker=SessionVialTracker(
