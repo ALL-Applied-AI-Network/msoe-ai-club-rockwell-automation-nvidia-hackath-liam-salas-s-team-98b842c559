@@ -1,4 +1,72 @@
-# Phase 1 UI progress
+# UI progress
+
+## Phase 4 — ISA-101 four-screen redesign (2026-11-01)
+
+Spec: `overnight-ops-20261028/notes-draft/UI-RESEARCH-AND-PROPOSAL.md` §3–4. Light grey by
+default, optional dark theme; colour only for discard (red ✖), can't assess (amber ?),
+running (blue dashed) and alarms; ≥48 px touch targets; 1920×1080 target.
+
+**What changed (all under `ui/`).** `src/app/AppShell.tsx` replaces `LiveHmi`: tabs L1 Line
+overview, L2 Inspection station (home), L3 Vial detail, L4 Diagnostics (only with the
+Engineer toggle), an Alarms (n) drawer, and honesty banners. `src/screens/station` plays the
+uploaded file locally with overlays (ROI outline, HUD with tank / stage / mL from event
+history, approximate fill tick), the current-vial card with rule/Qwen/Cosmos/AnomalyThink
+agreement and the equal-weight average, Agree / Override… (logged, never changes the
+decision), tray strip and counts. `src/screens/detail`: stages × vials evidence grid (crops,
+Lab swatches, rule ΔE76 with 1.0/2.0 bands), one card per source (vote, confidence,
+agreement, model-written text or labelled fallback with the rejected text behind a
+disclosure, observations), tracker timeline. `src/screens/overview`: KPIs and a log-scale
+ΔE-per-vial trend with bands and the recipe-start marker. `src/screens/diagnostics`: service
+and pin, model runtimes, event log, raw JSON per vial, operator-record ledger.
+`src/screens/alarms`: ISA-18.2-style list with priority, time, vial and acknowledge state.
+
+**Real vs limited.**
+- Real, from the runner API: the event stream, plus `GET /api/sessions/{id}/decisions` for
+  rule stage ΔE76 and per-model records (both exist on the live runner).
+- The live runner (`10c106f`) on `accepted-v4-train01-cohort.mp4` gives one honest
+  abstention: `insufficient_evidence` / `measurement_stage_unavailable`, no votes and no
+  per-vial evidence. The UI shows it as amber "Can't assess" with a plain reason.
+- The rich discard result is the recorded 2344f3c frozen-cohort hybrid session `e7383eef`.
+  `ui/tools/replay_runner.py` replays it, along with its evidence bundle and 27 crops. The
+  replay runs no model, and the UI marks it with a "Recorded replay, not live" banner.
+- Crops, bundle median Lab and the ROI box need the optional endpoints
+  `/evidence-bundle` and `/evidence/images/{id}`. Only the replay serves them today, so
+  against the live runner the UI says "Crop not exposed by this runner". Adding them to the
+  runner (new files in `src/fluidmix/pipeline/service/`) is a follow-up; it wasn't done here.
+- No liquid mask or locator geometry is streamed, so both are labelled rather than drawn.
+- `physics_cited` is parsed but empty: "Physics fields not provided yet (VLM schema v2
+  pending)". The model text, guard reasons and fallbacks come from today's decision records.
+- Operator agree/override records live in browser localStorage only, and the UI says so.
+- The pin stays `2344f3c`. Starting against `10c106f` needs `VITE_DEV_ALLOWED_COMMITS` and
+  shows an "Unpinned development service" banner.
+- Bug fixed: the client called `fetch` unbound (Illegal invocation in browsers). The old
+  e2e test hid this with an init script.
+- The dev video has its own burnt-in caption ("V1 KEEP"); the system result is discard.
+  That disagreement is in the twin data, not the UI.
+
+**Measured.** 54 Vitest tests pass; `npm run typecheck` and `npm run build` pass;
+Playwright `e2e` (test-only simulator, all screens + drawer) 1/1; `e2e:screens` 1/1 against
+the live runner and 1/1 against the replay. Screenshots (light and dark, 1920×1080):
+`ui/test-results/screenshots/redesign-{live-10c106f,replay-2344f3c}-{L1-overview,L2-station,L3-detail,L4-diagnostics,alarms}-{light,dark}-1920x1080.png`
+and `redesign-test-only-{light,dark}-1920x1080.png`.
+
+**Run** (from `ui/`, `export PATH=/tmp/node-v22.14.0-linux-arm64/bin:$PATH`; `npm ci` once):
+
+    npm test && npm run typecheck && npm run build
+    PLAYWRIGHT_BROWSERS_PATH=/tmp/frontend-playwright-browsers npm run e2e
+    # live runner on :8765 (must admit origin http://127.0.0.1:5173)
+    VITE_RUNNER_BASE_URL=http://127.0.0.1:8765 VITE_DEV_ALLOWED_COMMITS=10c106fbd38e3da34d902abb7d920c5a4041440e npm run dev -- --host 127.0.0.1 --port 5173
+    # recorded replay (development), from the repository root:
+    O=/home/hackathon5/liamreporoot/outputs/pipeline-20261028
+    python3 ui/tools/replay_runner.py --events $O/runner-production-factory-01a18128/free-explanations-e2e-20261101T173805Z/events.sse \
+      --decisions $O/runner-production-factory-01a18128/free-explanations-e2e-20261101T173805Z/decisions.json \
+      --bundle $O/wp7-vlm-dev-bundle-materializer-01a18128-attempt15/bundle.json --port 8775
+    VITE_RUNNER_BASE_URL=http://127.0.0.1:8775 npm run dev -- --host 127.0.0.1 --port 5174
+    # screenshots: SCREENS_RUNNER_BASE_URL=... SCREENS_LABEL=... SCREENS_VIDEO=<dev video> npm run e2e:screens
+
+Older phase notes follow; their commands for `LiveHmi`, `e2e:real` and the Phase 3 spec are superseded.
+
+## Phase 1 UI progress
 
 Phase 1 is at evidence-backed review/readiness for the frozen synthetic operator page: the local mock, adapter, accessible dashboard, deterministic progressive cues, evidence drawer, and browser smoke flow are runnable together. This is a handoff, not a plant-readiness claim.
 
