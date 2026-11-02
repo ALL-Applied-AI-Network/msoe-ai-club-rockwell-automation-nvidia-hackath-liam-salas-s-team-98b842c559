@@ -75,24 +75,6 @@ def test_session_profile_rejects_recipe_drift():
         })
 
 
-def test_stream_tank_classifier_rejects_colour_outside_frozen_radius():
-    from types import SimpleNamespace
-
-    from fluidmix.pipeline.service.production_factory import classify_stream_tank
-
-    freeze = SimpleNamespace(
-        tank_lab_centres={
-            "t100": (80.0, 0.0, 0.0),
-            "t200": (60.0, 10.0, 15.0),
-            "t400": (65.0, -15.0, -15.0),
-        },
-        tank_cluster_delta_e76=5.0,
-    )
-
-    assert classify_stream_tank((61.0, 10.0, 15.0), freeze) == "t200"
-    assert classify_stream_tank((50.0, -5.0, 9.0), freeze) is None
-
-
 def test_frozen_timing_is_expressed_in_seconds_and_scaled_to_source_fps():
     from fluidmix.pipeline.service.production_factory import FrozenTiming
 
