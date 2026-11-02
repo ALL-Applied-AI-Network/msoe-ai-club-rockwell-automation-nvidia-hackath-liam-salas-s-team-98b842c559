@@ -1,0 +1,30 @@
+.overview { display: grid; gap: 16px; }
+.overview-scope { margin: 0; color: var(--muted); }
+.overview-tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; }
+.overview-tile { padding: 12px 16px; }
+.overview-numeral { margin: 4px 0 0; font-size: 3.5rem; font-weight: 800; line-height: 1.1; color: var(--text); font-variant-numeric: tabular-nums; }
+.overview-numeral--discard { color: var(--discard); }
+.overview-numeral--amber { color: var(--amber); }
+.overview-unit { font-size: 1.1rem; font-weight: 600; color: var(--muted); }
+.overview-chart, .overview-recent { padding: 12px 16px; }
+.overview-chart h3, .overview-recent h3 { margin: 0 0 8px; }
+.overview-trend { margin: 0; }
+.overview-trend figcaption { color: var(--muted); font-size: .9rem; margin-top: 6px; }
+.overview-band--keep { fill: var(--panel-2); }
+.overview-band--check { fill: var(--amber-bg); }
+.overview-band--out { fill: var(--discard-bg); }
+.overview-band-label, .overview-tick, .overview-axis, .overview-changeover-label { fill: var(--muted); font-size: 13px; }
+.overview-changeover-label { fill: var(--text); font-weight: 700; }
+.overview-grid { stroke: var(--line); stroke-width: 1; }
+.overview-changeover { stroke: var(--neutral); stroke-width: 2; stroke-dasharray: 6 4; }
+.overview-empty { fill: var(--muted); font-size: 18px; font-style: italic; }
+.overview-dot { cursor: pointer; outline: none; }
+.overview-dot:focus-visible .overview-dot-mark { stroke: var(--focus); stroke-width: 4; }
+.overview-dot-mark { fill: var(--neutral); stroke: var(--panel); stroke-width: 2; }
+.overview-dot--discard .overview-dot-mark { fill: var(--discard); }
+.overview-dot--cant_assess .overview-dot-mark, .overview-dot--attention .overview-dot-mark { fill: var(--amber-fill); }
+.overview-dot-icon { fill: #fff; font-size: 14px; font-weight: 800; pointer-events: none; }
+.overview-dot--cant_assess .overview-dot-icon, .overview-dot--attention .overview-dot-icon { fill: #000; }
+.overview-recent table { width: 100%; border-collapse: collapse; }
+.overview-recent th, .overview-recent td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.overview-sr { position: absolute; left: -9999px; }

@@ -1,0 +1,11 @@
+.alarm-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(900px, 100vw); z-index: 50; padding: 16px; overflow: auto; border-radius: 0; outline: none; box-shadow: -4px 0 16px #0004; }
+.alarm-head { display: flex; justify-content: space-between; align-items: center; }
+.alarm-head h2 { margin: 0; }
+.alarm-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+.alarm-table th, .alarm-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.alarm-row--open td { font-weight: 700; }
+.alarm-priority { font-weight: 800; }
+.alarm-priority--red { color: var(--discard); }
+.alarm-priority--amber { color: var(--amber); }
+.alarm-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.alarm-note { color: var(--muted); margin-top: 12px; }

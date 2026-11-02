@@ -1,0 +1,11 @@
+.diag { display: grid; gap: 16px; }
+.diag-panel { padding: 12px 16px; }
+.diag-panel h3 { margin: 0 0 8px; }
+.diag-dl { display: grid; grid-template-columns: 200px 1fr; gap: 4px 12px; margin: 0; }
+.diag-dl dt { color: var(--muted); font-weight: 700; }
+.diag-dl dd { margin: 0; overflow-wrap: anywhere; }
+.diag-panel table { width: 100%; border-collapse: collapse; }
+.diag-panel th, .diag-panel td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.diag-scroll { max-height: 280px; overflow: auto; margin-top: 8px; }
+.diag-pre { max-height: 320px; overflow: auto; background: var(--panel-sunken); padding: 8px; font-size: .85rem; }
+.diag-error { color: var(--discard); font-weight: 700; }
